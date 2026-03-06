@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "reddit-bot"
+version = "2.0.0"
+description = "A feature-rich Reddit automation bot using Selenium"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "selenium>=4.10.0",
+    "webdriver-manager>=4.0.0",
+    "pyyaml>=6.0",
+    "cryptography>=41.0",
+    "tqdm>=4.65",
+    "requests>=2.31",
+    "bezier>=2023.7.28",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.10",
+]
+
+[project.scripts]
+reddit-bot = "main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
