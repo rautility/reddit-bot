@@ -1,0 +1,49 @@
+# Reddit Bot Configuration
+# Copy this file to config.yaml and customize as needed.
+
+# Input files
+accounts_path: "accounts.txt"
+links_path: "links.txt"
+
+# Modes
+verbose: true
+headless: false
+dry_run: false
+
+# Anti-detection
+rotate_user_agent: false
+randomize_actions: false
+human_mouse: false
+
+proxy:
+  enabled: false
+  proxy_list_path: "proxies.txt"
+  rotate_per_account: true
+
+rate_limit:
+  min_action_delay: 2.0
+  max_action_delay: 8.0
+  min_account_delay: 5.0
+  max_account_delay: 15.0
+  daily_action_quota: 0  # 0 = unlimited
+
+# Orchestration
+parallel_accounts: 1
+# schedule_cron: "0 */6 * * *"  # Run every 6 hours
+session_persistence: false
+session_dir: ".sessions"
+
+# Credentials
+encrypt_credentials: false
+credentials_key_env: "REDDIT_BOT_KEY"
+
+# Reporting
+screenshot_on_failure: false
+screenshot_dir: "screenshots"
+db_path: "reddit_bot.db"
+
+webhook:
+  enabled: false
+  url: ""  # Discord, Slack, or generic webhook URL
+  on_completion: true
+  on_failure: true

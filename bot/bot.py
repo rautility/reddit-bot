@@ -1,79 +1,158 @@
+"""Core Reddit bot — orchestrates browser, actions, and all features."""
+
+from __future__ import annotations
+
 import contextlib
-import time, enum, random, logging
+import enum
+import logging
+import os
+import random
+import time
+from pathlib import Path
+from typing import Optional
+
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 
-
+from .config import BotConfig
 from .ghost_logger import GhostLogger
+from .database import BotDatabase
+from .reporting import ExecutionSummary
+from .actions.base import ActionResult
+from .actions.registry import ActionRegistry
+from .utils.timeouts import Timeouts
+from .utils.retry import retry_action
+from .utils.user_agents import get_random_user_agent
+from .utils.proxy import load_proxies, get_next_proxy
+from .utils.validators import validate_reddit_url
 
 
 class DefaultLinksEnum(enum.Enum):
-    home = "https://www.reddit.com/"
-    login = "https://www.reddit.com/login/"
-
-
-class Timeouts:
-    def srt() -> None:
-        """short timeout"""
-        time.sleep(random.random() + random.randint(0, 2))
-
-    def med() -> None:
-        """medium timeout"""
-        time.sleep(random.random() + random.randint(2, 5))
-
-    def lng() -> None:
-        """long timeout"""
-        time.sleep(random.random() + random.randint(5, 10))
+    HOME = "https://www.reddit.com/"
+    LOGIN = "https://www.reddit.com/login/"
 
 
 class RedditBot:
-    def __init__(self, verbose: bool = False):
-        self.logger = GhostLogger
-        if verbose:
-            self.verbose = True
-            # configure logging
-            self.logger = logging.getLogger(__name__)
-            self.logger.setLevel(logging.INFO)
-            self.logger.addHandler(logging.StreamHandler())
-            formatter = logging.Formatter(
-                "\033[93m[INFO]\033[0m %(asctime)s \033[95m%(message)s\033[0m"
-            )
-            self.logger.handlers[0].setFormatter(formatter)
+    """Feature-rich Reddit automation bot.
 
+    Supports context manager usage:
+        with RedditBot(config) as bot:
+            bot.login(username, password)
+            result = bot.perform_action("upvote", link="...")
+    """
+
+    def __init__(self, config: Optional[BotConfig] = None, verbose: bool = False):
+        self.config = config or BotConfig(verbose=verbose)
+        self.summary = ExecutionSummary()
+        self.db: Optional[BotDatabase] = None
+        self._current_account: Optional[str] = None
+
+        # Logger setup
+        if self.config.verbose:
+            self.logger = logging.getLogger("reddit-bot")
+            self.logger.setLevel(logging.INFO)
+            if not self.logger.handlers:
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter(
+                    "\033[93m[INFO]\033[0m %(asctime)s \033[95m%(message)s\033[0m"
+                )
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
+        else:
+            self.logger = GhostLogger()
+
+        # Database
+        self.db = BotDatabase(self.config.db_path)
+
+        # Proxy setup
+        if self.config.proxy.enabled and self.config.proxy.proxy_list_path:
+            load_proxies(self.config.proxy.proxy_list_path)
+            self.logger.info("Proxies loaded")
+
+        # Screenshot directory
+        if self.config.screenshot_on_failure:
+            Path(self.config.screenshot_dir).mkdir(parents=True, exist_ok=True)
+
+        # Session directory
+        if self.config.session_persistence:
+            Path(self.config.session_dir).mkdir(parents=True, exist_ok=True)
+
+        # Initialize webdriver
+        self._init_driver()
+
+    def _init_driver(self) -> None:
+        """Initialize Chrome webdriver with all configured options."""
         self.logger.info("Booting up webdriver")
         chrome_options = webdriver.ChromeOptions()
-        chrome_options.add_argument("log-level=3")
+        chrome_options.add_argument("--log-level=3")
         chrome_options.add_argument("--lang=en")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
         chrome_options.add_experimental_option(
             "prefs", {"profile.default_content_setting_values.notifications": 2}
         )
-        self.dv = webdriver.Chrome(
-            chrome_options=chrome_options, executable_path=r"chromedriver.exe"
+
+        # Headless mode
+        if self.config.headless:
+            chrome_options.add_argument("--headless=new")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+
+        # User-Agent rotation
+        if self.config.rotate_user_agent:
+            ua = get_random_user_agent()
+            chrome_options.add_argument(f"--user-agent={ua}")
+            self.logger.info(f"Using user agent: {ua[:60]}...")
+
+        # Proxy
+        proxy = get_next_proxy() if self.config.proxy.enabled else None
+        if proxy:
+            chrome_options.add_argument(proxy.chrome_arg)
+            self.logger.info(f"Using proxy: {proxy.address}")
+
+        service = Service(ChromeDriverManager().install())
+        self.dv = webdriver.Chrome(service=service, options=chrome_options)
+
+        # Remove webdriver navigator flag
+        self.dv.execute_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
+
         self.logger.info("Webdriver booted up")
 
-    def login(self, username: str, password: str):
-        # clear data first
+    def __enter__(self) -> "RedditBot":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self.dispose()
+        return False
+
+    # ─── Authentication ──────────────────────────────────────────
+
+    def login(self, username: str, password: str) -> None:
+        """Log into a Reddit account."""
         self.logout()
+        self._current_account = username
 
-        self.logger.info(f"Logging in as \033[4m{username}\033[0m")
-        self.dv.get(DefaultLinksEnum.login.value)
+        self.logger.info(f"Logging in as {username}")
+        self.dv.get(DefaultLinksEnum.LOGIN.value)
+        Timeouts.med()
 
-        # username
+        # Username field
         try:
             username_field = self.dv.find_element(By.NAME, "username")
         except NoSuchElementException:
             WebDriverWait(self.dv, 20).until(
                 EC.frame_to_be_available_and_switch_to_it(
-                    (
-                        By.XPATH,
-                        '//*[@id="SHORTCUT_FOCUSABLE_DIV"]/div[3]/div[2]/div/iframe',
-                    )
+                    (By.CSS_SELECTOR, "iframe[src*='login']")
                 )
             )
             username_field = self.dv.find_element(By.NAME, "username")
@@ -83,159 +162,223 @@ class RedditBot:
             Timeouts.srt()
         Timeouts.med()
 
-        # password
+        # Password field
         password_field = self.dv.find_element(By.NAME, "password")
-
         for ch in password:
             password_field.send_keys(ch)
             Timeouts.srt()
         Timeouts.med()
 
-        # sign in
+        # Submit
         with contextlib.suppress(Exception):
             password_field.send_keys(Keys.ENTER)
         Timeouts.med()
 
-        assert "https://www.reddit.com/login" not in self.dv.current_url, "Login failed"
+        if "login" in self.dv.current_url:
+            raise RuntimeError(f"Login failed for user: {username}")
 
         self._popup_handler()
         self._cookies_handler()
+
+        # Save session if persistence is enabled
+        if self.config.session_persistence:
+            self._save_session(username)
+
         self.logger.info("Logged in successfully.")
 
+    def login_with_session(self, username: str) -> bool:
+        """Attempt to restore a saved session. Returns True if successful."""
+        if not self.config.session_persistence:
+            return False
+
+        session_file = Path(self.config.session_dir) / f"{username}.cookies"
+        if not session_file.exists():
+            return False
+
+        self.logger.info(f"Restoring session for {username}")
+        self.dv.get(DefaultLinksEnum.HOME.value)
+        Timeouts.srt()
+
+        import json
+        with open(session_file, "r") as f:
+            cookies = json.load(f)
+
+        for cookie in cookies:
+            with contextlib.suppress(Exception):
+                self.dv.add_cookie(cookie)
+
+        self.dv.refresh()
+        Timeouts.med()
+
+        # Verify login
+        if "login" not in self.dv.current_url:
+            self._current_account = username
+            self.logger.info("Session restored successfully.")
+            return True
+
+        self.logger.info("Session expired, need fresh login.")
+        return False
+
     def logout(self) -> None:
-        self.logger.info(f"Clearing browser data")
+        """Clear browser data between accounts."""
+        self.logger.info("Clearing browser data")
+        self.dv.delete_all_cookies()
+        self.dv.execute_script("window.localStorage.clear();")
+        self.dv.execute_script("window.sessionStorage.clear();")
 
-        self.dv.execute_script("window.open('');")
-        self.dv.switch_to.window(self.dv.window_handles[-1])
-        self.dv.get('chrome://settings/clearBrowserData')
-        Timeouts.srt()
+    # ─── Action Execution ────────────────────────────────────────
 
-        # clear data
-        actions = ActionChains(self.dv) 
-        actions.send_keys(Keys.TAB * 3 + Keys.DOWN * 3)
-        actions.perform()
-        Timeouts.srt()
+    def perform_action(self, action_name: str, **kwargs) -> ActionResult:
+        """Execute a named action with retry logic, validation, and tracking.
 
-        # confirm
-        actions = ActionChains(self.dv) 
-        actions.send_keys(Keys.TAB * 4 + Keys.ENTER)
-        actions.perform()
-        Timeouts.med()
+        This is the primary method for executing any bot action.
+        """
+        link = kwargs.get("link", "")
 
-        # close current tab
-        self.dv.close()
+        # URL validation
+        if link and not validate_reddit_url(link) and action_name not in ("update_bio", "dm"):
+            self.logger.warning(f"Invalid Reddit URL: {link}")
 
-        # switch to the first tab
-        self.dv.switch_to.window(self.dv.window_handles[0])
+        # Duplicate check
+        if self.db and self._current_account:
+            if self.db.was_action_performed(self._current_account, action_name, link):
+                msg = f"Action already performed by {self._current_account}"
+                self.logger.info(msg)
+                result = ActionResult(success=True, action=action_name, link=link, message=msg)
+                self.summary.add(result)
+                return result
 
-    def vote(self, link: str, action: bool) -> None:
-        """action: True to upvote, False to downvote"""
-        if action:
-            self.logger.info(f"Upvoting \033[4m{link}\033[0m")
-        else:
-            self.logger.info(f"Downvoting \033[4m{link}\033[0m")
+        # Quota check
+        if self.config.rate_limit.daily_action_quota > 0 and self.db and self._current_account:
+            count = self.db.get_daily_action_count(self._current_account)
+            if count >= self.config.rate_limit.daily_action_quota:
+                msg = f"Daily quota ({self.config.rate_limit.daily_action_quota}) reached for {self._current_account}"
+                self.logger.warning(msg)
+                result = ActionResult(success=False, action=action_name, link=link, message=msg)
+                self.summary.add(result)
+                return result
 
-        self._get_link(link, handle_nsfw=True)
+        # Execute with retry
+        registry = ActionRegistry(self.dv, self.config, self.logger)
+        result = self._execute_with_retry(registry, action_name, **kwargs)
 
-        if action:
-            button = self.dv.find_element(By.XPATH,
-                "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[3]/div[1]/div[3]/div[1]/div/div[1]/div/button[1]"
+        # Log to database
+        if self.db and self._current_account:
+            screenshot_path = None
+            if not result.success and self.config.screenshot_on_failure:
+                screenshot_path = self._take_screenshot(action_name, link)
+                result.screenshot_path = screenshot_path
+
+            self.db.log_action(
+                account=self._current_account,
+                action=action_name,
+                link=link,
+                success=result.success,
+                error_message=result.message if not result.success else None,
+                screenshot_path=screenshot_path,
             )
-        else:
-            button = self.dv.find_element(By.XPATH,
-                "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[3]/div[1]/div[3]/div[1]/div/div[1]/div/button[2]"
-            )
 
-        button.click()
-        Timeouts.med()
+        self.summary.add(result)
 
-    def comment(self, link: str, comment: str) -> None:
-        """comment: the comment to be posted"""
-        self.logger.info(f"Commenting on \033[4m{link}\033[0m")
+        # Rate limiting delay between actions
+        Timeouts.custom(
+            self.config.rate_limit.min_action_delay,
+            self.config.rate_limit.max_action_delay,
+        )
 
-        self._get_link(link, handle_nsfw=True)
+        return result
 
-        html_body = self.dv.find_element(By.XPATH, "/html/body")
-        html_body.send_keys(Keys.PAGE_DOWN)
-        Timeouts.srt()
-
-        if comment:
-            try:
-                textbox = self.dv.find_element(By.XPATH,
-                    "/html/body/div[1]/div/div[2]/div[3]/div/div/div/div[2]/div[1]/div[2]/div[3]/div[2]/div/div/div[2]/div/div[1]/div/div/div"
+    def _execute_with_retry(self, registry: ActionRegistry, action_name: str, **kwargs) -> ActionResult:
+        """Execute an action with retry on failure."""
+        last_result = None
+        for attempt in range(3):
+            result = registry.execute(action_name, **kwargs)
+            if result.success:
+                return result
+            last_result = result
+            if attempt < 2:
+                delay = 2.0 * (2 ** attempt)
+                self.logger.warning(
+                    f"Action '{action_name}' failed (attempt {attempt + 1}/3): {result.message}. "
+                    f"Retrying in {delay:.0f}s..."
                 )
-            except NoSuchElementException:
-                textbox = self.dv.find_element(By.XPATH,
-                    '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[3]/div[1]/div[2]/div[3]/div[2]/div/div/div[2]/div/div[1]/div/div/div',
-                )
-            textbox.click()
+                time.sleep(delay)
+        return last_result
 
-            for ch in comment:
-                textbox.send_keys(ch)
-                Timeouts.srt()
+    # ─── Legacy convenience methods (delegate to perform_action) ─
 
-            try:
-                comment_button = self.dv.find_element(By.XPATH,
-                    "/html/body/div[1]/div/div[2]/div[3]/div/div/div/div[2]/div[1]/div[2]/div[3]/div[2]/div/div/div[3]/div[1]/button"
-                )
-            except NoSuchElementException:
-                comment_button = self.dv.find_element(By.XPATH,
-                    '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[3]/div[1]/div[2]/div[3]/div[2]/div/div/div[3]/div[1]/button',
-                )
-            comment_button.click()
+    def vote(self, link: str, action: bool) -> ActionResult:
+        """Upvote or downvote a post."""
+        return self.perform_action("upvote" if action else "downvote", link=link)
 
-        Timeouts.med()
+    def comment(self, link: str, text: str) -> ActionResult:
+        """Post a comment on a post."""
+        return self.perform_action("comment", link=link, comment=text)
 
-    def join_community(self, link: str, join: bool) -> None:
-        """join: True to join, False to leave"""
-        if join:
-            self.logger.info(f"Joining \033[4m{link}\033[0m")
-        else:
-            self.logger.info(f"Leaving \033[4m{link}\033[0m")
+    def join_community(self, link: str, join: bool) -> ActionResult:
+        """Join or leave a community."""
+        return self.perform_action("join" if join else "leave", link=link)
 
-        self._get_link(link, handle_nsfw=True)
+    # ─── Utility ─────────────────────────────────────────────────
 
+    def _save_session(self, username: str) -> None:
+        """Save cookies to disk for session persistence."""
+        import json
+        cookies = self.dv.get_cookies()
+        session_file = Path(self.config.session_dir) / f"{username}.cookies"
+        with open(session_file, "w") as f:
+            json.dump(cookies, f)
+
+    def _take_screenshot(self, action: str, link: str) -> str:
+        """Capture a screenshot on failure."""
+        import re
+        safe_name = re.sub(r'[^\w\-.]', '_', f"{action}_{link[:50]}")
+        ts = int(time.time())
+        path = str(Path(self.config.screenshot_dir) / f"{safe_name}_{ts}.png")
         try:
-            join_button = self.dv.find_element(By.XPATH,
-                "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button"
-            )
-        except NoSuchElementException:
-            join_button = self.dv.find_element(By.XPATH,
-                '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button',
-            )
-
-        button_text = join_button.text.lower()
-
-        if join and button_text == "join" or not join and button_text == "joined":
-            join_button.click()
-        Timeouts.med()
-
-    def _get_link(self, link: str, handle_nsfw: bool = False) -> None:
-        self.dv.get(link)
-        Timeouts.med()
-
-        if handle_nsfw:
-            with contextlib.suppress(NoSuchElementException):
-                nsfw_button = self.dv.find_element(By.XPATH,
-                    "/html/body/div[1]/div/div[2]/div[2]/div/div/div[1]/div/div/div[2]/button"
-                )
-                nsfw_button.click()
-            Timeouts.med()
+            self.dv.save_screenshot(path)
+            self.logger.info(f"Screenshot saved: {path}")
+        except Exception as e:
+            self.logger.error(f"Failed to take screenshot: {e}")
+            return ""
+        return path
 
     def _popup_handler(self) -> None:
         with contextlib.suppress(NoSuchElementException):
-            close_button = self.dv.find_element(By.XPATH,
+            btn = self.dv.find_element(By.CSS_SELECTOR, "button[aria-label='Close']")
+            btn.click()
+        with contextlib.suppress(NoSuchElementException):
+            btn = self.dv.find_element(By.XPATH,
                 "/html/body/div[1]/div/div[2]/div[1]/header/div/div[2]/div[2]/div/div[1]/span[2]/div/div[2]/button"
             )
-            close_button.click()
+            btn.click()
 
     def _cookies_handler(self) -> None:
         with contextlib.suppress(NoSuchElementException):
-            accept_button = self.dv.find_element(By.XPATH,
+            btn = self.dv.find_element(By.CSS_SELECTOR, "button[name='accept']")
+            btn.click()
+        with contextlib.suppress(NoSuchElementException):
+            btn = self.dv.find_element(By.XPATH,
                 "/html/body/div[1]/div/div/div/div[3]/div/form/div/button"
             )
-            accept_button.click()
+            btn.click()
 
-    def _dispose(self) -> None:
+    def reinit_driver(self) -> None:
+        """Reinitialize the webdriver (e.g., for proxy rotation per account)."""
+        self.logger.info("Reinitializing webdriver for new session")
+        try:
+            self.dv.quit()
+        except Exception:
+            pass
+        self._init_driver()
+
+    def dispose(self) -> None:
+        """Shut down the webdriver and close the database."""
+        self.summary.finalize()
         self.logger.info("Disposing webdriver")
-        self.dv.quit()
+        try:
+            self.dv.quit()
+        except Exception:
+            pass
+        if self.db:
+            self.db.close()
