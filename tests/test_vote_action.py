@@ -151,3 +151,33 @@ def test_vote_action_falls_back_when_extension_confidence_is_low(mocker):
     action._find_self_healing.assert_called_once()
     action._click.assert_called_once_with(legacy_button)
     bridge.element_for_candidate.assert_not_called()
+
+
+def test_vote_action_stops_when_extension_candidate_is_disabled(mocker):
+    action, _ = _vote_action(mocker)
+    action.config.chrome_extension_healer_enabled = True
+    action._click = mocker.Mock()
+    candidate = ChromeControlCandidate(
+        id="control-1",
+        intent="upvote",
+        selector="button[data-action-bar-action=\"upvote\"]",
+        confidence=1.0,
+        state={"disabled": True, "pressed": False},
+        actionable=False,
+    )
+    bridge = mocker.Mock()
+    bridge.find_control.return_value = ChromeControlResult(
+        ok=True,
+        intent="upvote",
+        best_candidate=candidate,
+        candidates=[candidate],
+    )
+    mocker.patch("bot.utils.chrome_extension_bridge.ChromeExtensionBridge", return_value=bridge)
+
+    result = action.execute("https://www.reddit.com/r/test/comments/abc", upvote=True)
+
+    assert result.success is False
+    assert "control is disabled" in result.message
+    action._find_self_healing.assert_not_called()
+    action._click.assert_not_called()
+    bridge.element_for_candidate.assert_not_called()

@@ -21,6 +21,7 @@ class ChromeControlCandidate:
     bounding_box: dict[str, Any] = field(default_factory=dict)
     state: dict[str, Any] = field(default_factory=dict)
     evidence: list[str] = field(default_factory=list)
+    actionable: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ChromeControlCandidate":
@@ -34,6 +35,7 @@ class ChromeControlCandidate:
             bounding_box=data.get("boundingBox") if isinstance(data.get("boundingBox"), dict) else {},
             state=data.get("state") if isinstance(data.get("state"), dict) else {},
             evidence=data.get("evidence") if isinstance(data.get("evidence"), list) else [],
+            actionable=bool(data.get("actionable", True)),
         )
 
 

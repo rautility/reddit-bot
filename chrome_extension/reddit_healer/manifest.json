@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Reddit Bot Healer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Inspects Reddit controls and streams structured DOM, network, and console events to the bot.",
   "host_permissions": [
     "https://www.reddit.com/*",

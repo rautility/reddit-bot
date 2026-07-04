@@ -15,63 +15,31 @@
     }, '*');
   }
 
-  const originalFetch = window.fetch;
-  if (typeof originalFetch === 'function') {
-    window.fetch = function patchedFetch(input, init) {
-      const startedAt = Date.now();
-      const url = typeof input === 'string' ? input : input && input.url;
-      return originalFetch.apply(this, arguments)
-        .then(response => {
+  // Observe network resources passively. Avoid wrapping fetch/XHR because Reddit's
+  // preload credential checks can otherwise point at this bridge in DevTools.
+  if (typeof PerformanceObserver === 'function') {
+    try {
+      const networkObserver = new PerformanceObserver(list => {
+        for (const entry of list.getEntries()) {
+          if (!entry || !entry.name) {
+            continue;
+          }
           emit('network_response', {
-            transport: 'fetch',
-            url: response.url || url || '',
-            status: response.status,
-            ok: response.ok,
-            durationMs: Date.now() - startedAt
+            transport: entry.initiatorType || 'resource',
+            url: entry.name,
+            status: Number(entry.responseStatus || 0),
+            ok: !entry.responseStatus || (
+              entry.responseStatus >= 200 &&
+              entry.responseStatus < 400
+            ),
+            durationMs: Math.round(entry.duration || 0)
           });
-          return response;
-        })
-        .catch(error => {
-          emit('network_error', {
-            transport: 'fetch',
-            url: url || '',
-            error: String(error),
-            durationMs: Date.now() - startedAt
-          });
-          throw error;
-        });
-    };
-  }
-
-  const OriginalXHR = window.XMLHttpRequest;
-  if (typeof OriginalXHR === 'function') {
-    const originalOpen = OriginalXHR.prototype.open;
-    const originalSend = OriginalXHR.prototype.send;
-
-    OriginalXHR.prototype.open = function patchedOpen(method, url) {
-      this.__redditBotHealer = {
-        method,
-        url,
-        startedAt: 0
-      };
-      return originalOpen.apply(this, arguments);
-    };
-
-    OriginalXHR.prototype.send = function patchedSend() {
-      const meta = this.__redditBotHealer || {};
-      meta.startedAt = Date.now();
-      this.addEventListener('loadend', () => {
-        emit('network_response', {
-          transport: 'xhr',
-          method: meta.method || '',
-          url: this.responseURL || meta.url || '',
-          status: this.status,
-          ok: this.status >= 200 && this.status < 400,
-          durationMs: Date.now() - meta.startedAt
-        });
+        }
       });
-      return originalSend.apply(this, arguments);
-    };
+      networkObserver.observe({entryTypes: ['resource']});
+    } catch (_error) {
+      // Resource timing observation is diagnostic-only; control healing does not depend on it.
+    }
   }
 
   for (const level of ['debug', 'info', 'warn', 'error']) {

@@ -8,7 +8,7 @@
   const REQUEST_CHANNEL = 'reddit-bot-healer:request';
   const RESPONSE_CHANNEL = 'reddit-bot-healer:response';
   const PAGE_EVENT_CHANNEL = 'reddit-bot-healer:page-event';
-  const HEALER_VERSION = '0.2.0';
+  const HEALER_VERSION = '0.2.1';
   const EVENT_LIMIT = 500;
   const shadowRoots = new WeakSet();
   const events = [];
@@ -512,6 +512,29 @@
     return bestScore;
   }
 
+  function hasSpecificIntentAttribute(element, intent) {
+    const config = INTENTS[intent] || {labels: [intent], iconHints: []};
+    for (const attr of ATTRIBUTE_NAMES) {
+      if (!element.hasAttribute || !element.hasAttribute(attr)) {
+        continue;
+      }
+      if (attr === intent) {
+        return true;
+      }
+      const value = normalizeText(element.getAttribute(attr));
+      if (
+        value === intent ||
+        config.labels.includes(value) ||
+        value.includes(intent) ||
+        config.labels.some(label => value.includes(label)) ||
+        config.iconHints.some(hint => value.includes(hint))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function controlCenter(element) {
     const rect = boundingBoxFor(element);
     return {
@@ -622,15 +645,22 @@
     if (!clickable) {
       return null;
     }
+    if (!isClickableElement(clickable)) {
+      return null;
+    }
     const config = INTENTS[intent] || {labels: [intent], reject: []};
     const directText = safeText(element, clickable, {includeAncestors: false});
     const text = safeText(element, clickable, {includeAncestors: true});
     const directPositive = config.labels.some(label => directText.includes(label));
     const directReject = config.reject.some(label => directText.includes(label));
+    const specificIntentAttribute = hasSpecificIntentAttribute(clickable, intent);
     const evidence = [];
     let score = 0;
 
     if (directReject && !directPositive) {
+      return null;
+    }
+    if (directPositive && directReject && !specificIntentAttribute) {
       return null;
     }
 
@@ -674,6 +704,10 @@
       score -= 35;
       evidence.push('disabled');
     }
+    const actionable = !controlState.disabled;
+    if (!actionable) {
+      score = Math.min(score, 100);
+    }
 
     const rect = boundingBoxFor(clickable);
     const selector = selectorFor(clickable);
@@ -682,6 +716,7 @@
       intent,
       selector,
       confidence: Math.max(0, Math.min(1, score / 145)),
+      actionable,
       text: text.slice(0, 180),
       directText: directText.slice(0, 180),
       attributes: attributesFor(clickable),
@@ -699,6 +734,55 @@
     delete copy._element;
     delete copy._score;
     return copy;
+  }
+
+  function candidateMeetsActionableThreshold(candidate, minConfidence) {
+    return Boolean(
+      candidate &&
+      candidate.actionable &&
+      candidate.confidence >= minConfidence
+    );
+  }
+
+  function buildScanResult(payload, passIndex, scopes, candidates, nearMisses, completedScopes) {
+    candidates.sort((left, right) => right.confidence - left.confidence);
+    nearMisses.sort((left, right) => right.confidence - left.confidence);
+    const publicCandidates = candidates.slice(0, 20).map(publicCandidate);
+    const publicNearMisses = nearMisses.slice(0, 20).map(publicCandidate);
+    const bestCandidate = publicCandidates[0] || null;
+    const minConfidence = Number(payload.minConfidence || 0);
+    const meetsMinConfidence = candidateMeetsActionableThreshold(bestCandidate, minConfidence);
+    if (bestCandidate) {
+      addEvent('found_control', {
+        intent: String(payload.intent || '').toLowerCase(),
+        candidateId: bestCandidate.id,
+        selector: bestCandidate.selector,
+        confidence: bestCandidate.confidence,
+        actionable: bestCandidate.actionable,
+        state: bestCandidate.state,
+        scanPass: passIndex + 1,
+        meetsMinConfidence
+      });
+    } else {
+      addEvent('control_scan_empty', {
+        intent: String(payload.intent || '').toLowerCase(),
+        scanPass: passIndex + 1,
+        nearMisses: publicNearMisses.length
+      });
+    }
+    return {
+      ok: true,
+      intent: String(payload.intent || '').toLowerCase(),
+      url: window.location.href,
+      minConfidence,
+      meetsMinConfidence,
+      scanPass: passIndex + 1,
+      scopesSearched: (completedScopes || scopes).map(scopeInfo => scopeInfo.name),
+      bestCandidate,
+      candidates: publicCandidates,
+      nearMisses: publicNearMisses,
+      events: recentEvents(payload.since)
+    };
   }
 
   function scopeList(postUrl) {
@@ -773,6 +857,7 @@
     const candidateElements = [];
     const nearSeen = new WeakSet();
     const nearMisses = [];
+    const completedScopes = [];
 
     for (const scopeInfo of scopes) {
       const roots = [];
@@ -792,6 +877,23 @@
             } else if (candidate.confidence > existing.confidence) {
               candidateByElement.set(candidate._element, candidate);
             }
+            if (
+              scopeInfo.name !== 'document-fallback' &&
+              candidateMeetsActionableThreshold(candidate, minConfidence)
+            ) {
+              const candidates = [candidate];
+              const filteredNearMisses = nearMisses.filter(
+                nearMiss => !candidateByElement.has(nearMiss._element)
+              );
+              return buildScanResult(
+                payload,
+                passIndex,
+                scopes,
+                candidates,
+                filteredNearMisses,
+                completedScopes.concat([scopeInfo])
+              );
+            }
             continue;
           }
           if (!nearSeen.has(clickable) && nearMisses.length < 30) {
@@ -803,6 +905,7 @@
           }
         }
       }
+      completedScopes.push(scopeInfo);
     }
 
     const candidates = [];
@@ -816,42 +919,7 @@
       }
     }
 
-    candidates.sort((left, right) => right.confidence - left.confidence);
-    filteredNearMisses.sort((left, right) => right.confidence - left.confidence);
-    const publicCandidates = candidates.slice(0, 20).map(publicCandidate);
-    const publicNearMisses = filteredNearMisses.slice(0, 20).map(publicCandidate);
-    const bestCandidate = publicCandidates[0] || null;
-    const meetsMinConfidence = Boolean(bestCandidate && bestCandidate.confidence >= minConfidence);
-    if (bestCandidate) {
-      addEvent('found_control', {
-        intent,
-        candidateId: bestCandidate.id,
-        selector: bestCandidate.selector,
-        confidence: bestCandidate.confidence,
-        state: bestCandidate.state,
-        scanPass: passIndex + 1,
-        meetsMinConfidence
-      });
-    } else {
-      addEvent('control_scan_empty', {
-        intent,
-        scanPass: passIndex + 1,
-        nearMisses: publicNearMisses.length
-      });
-    }
-    return {
-      ok: true,
-      intent,
-      url: window.location.href,
-      minConfidence,
-      meetsMinConfidence,
-      scanPass: passIndex + 1,
-      scopesSearched: scopes.map(scopeInfo => scopeInfo.name),
-      bestCandidate,
-      candidates: publicCandidates,
-      nearMisses: publicNearMisses,
-      events: recentEvents(payload.since)
-    };
+    return buildScanResult(payload, passIndex, scopes, candidates, filteredNearMisses, completedScopes);
   }
 
   function sleep(ms) {
@@ -886,7 +954,7 @@
       result.scanPasses = scanPasses;
       result.settleMs = settleMs;
       bestResult = betterScanResult(bestResult, result);
-      if (result.bestCandidate && result.bestCandidate.confidence >= minConfidence) {
+      if (candidateMeetsActionableThreshold(result.bestCandidate, minConfidence)) {
         return result;
       }
       if (passIndex < scanPasses - 1) {

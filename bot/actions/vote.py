@@ -36,9 +36,17 @@ class VoteAction(BaseAction):
 
         label = "upvote" if upvote else "downvote"
         self._last_extension_vote_candidate = None
+        self._last_extension_disabled_vote_candidate = None
         self._last_extension_confirm_response = None
         self._last_click_diagnostics = None
         button = self._find_extension_vote_button(label, link)
+        if button is None and self._last_extension_disabled_vote_candidate is not None:
+            return ActionResult(
+                success=False,
+                action=vote_type,
+                link=link,
+                message=f"{label.title()} control is disabled; post may be archived or voting is unavailable",
+            )
         if button is None:
             button = self._find_vote_button(label, upvote)
         if button is None:
@@ -126,6 +134,12 @@ class VoteAction(BaseAction):
             self.logger.info(
                 f"Chrome extension healer skipped low-confidence {label} candidate "
                 f"({candidate.confidence:.2f} < {min_confidence:.2f})"
+            )
+            return None
+        if candidate.state.get("disabled"):
+            self._last_extension_disabled_vote_candidate = candidate
+            self.logger.info(
+                f"Chrome extension healer found {label} control but it is disabled"
             )
             return None
 

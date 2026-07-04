@@ -21,6 +21,7 @@ def test_control_candidate_from_dict_normalizes_fields():
             "boundingBox": {"x": 10, "y": 20, "width": 30, "height": 40},
             "state": {"pressed": False},
             "evidence": ["contains label: downvote"],
+            "actionable": False,
         }
     )
 
@@ -29,6 +30,7 @@ def test_control_candidate_from_dict_normalizes_fields():
     assert candidate.confidence == 0.91
     assert candidate.bounding_box["width"] == 30
     assert candidate.state["pressed"] is False
+    assert candidate.actionable is False
 
 
 def test_control_result_uses_best_candidate_from_response():
