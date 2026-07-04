@@ -72,6 +72,47 @@ def cmdline_args() -> dict:
         action="store_true",
         help="Use human-like Bezier curve mouse movements.",
     )
+    parser.add_argument(
+        "--manual-login",
+        dest="manual_login",
+        action="store_true",
+        default=None,
+        help="Pause for manual browser login when automatic login fails.",
+    )
+    parser.add_argument(
+        "--use-existing-chrome",
+        dest="use_existing_chrome",
+        action="store_true",
+        default=None,
+        help="Attach to an already logged-in Chrome instance instead of automated login.",
+    )
+    parser.add_argument(
+        "--chrome-user-data-dir",
+        dest="chrome_user_data_dir",
+        help="Chrome user-data-dir to reuse profile/session.",
+    )
+    parser.add_argument(
+        "--chrome-profile-name",
+        dest="chrome_profile_name",
+        help="Chrome profile directory under user-data-dir (default: Default).",
+    )
+    parser.add_argument(
+        "--chrome-debugging-address",
+        dest="chrome_debugging_address",
+        help="Address of an existing Chrome debugger instance (e.g. 127.0.0.1:9222).",
+    )
+    parser.add_argument(
+        "--chrome-extension-healer",
+        dest="chrome_extension_healer_enabled",
+        action="store_true",
+        default=None,
+        help="Enable the Reddit healer Chrome extension bridge.",
+    )
+    parser.add_argument(
+        "--chrome-extension-path",
+        dest="chrome_extension_path",
+        help="Path to the unpacked Reddit healer Chrome extension.",
+    )
 
     # ─── Orchestration ───────────────────────────────────────
     parser.add_argument(

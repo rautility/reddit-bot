@@ -50,6 +50,11 @@ class BotConfig:
     rotate_user_agent: bool = False
     randomize_actions: bool = False
     human_mouse: bool = False
+    manual_login: bool = True
+    use_existing_chrome: bool = False
+    chrome_user_data_dir: Optional[str] = None
+    chrome_profile_name: Optional[str] = None
+    chrome_debugging_address: Optional[str] = None
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
     # Orchestration
@@ -72,6 +77,18 @@ class BotConfig:
     screenshot_on_failure: bool = False
     screenshot_dir: str = "screenshots"
 
+    # Self-healing selectors
+    selector_cache_path: str = ".selector-healing/reddit_selectors.json"
+    selector_diagnostics_dir: str = ".selector-healing/diagnostics"
+    selector_fallback_wait: float = 1.0
+    selenium_implicit_wait: int = 20
+
+    # Chrome extension healer bridge
+    chrome_extension_healer_enabled: bool = False
+    chrome_extension_path: str = "chrome_extension/reddit_healer"
+    chrome_extension_bridge_timeout_ms: int = 1500
+    chrome_extension_min_confidence: float = 0.72
+
     @classmethod
     def from_yaml(cls, path: str) -> "BotConfig":
         """Load config from a YAML file."""
@@ -90,9 +107,15 @@ class BotConfig:
         simple_fields = {
             "accounts_path", "links_path", "verbose", "headless", "dry_run",
             "rotate_user_agent", "randomize_actions", "human_mouse",
+            "manual_login", "use_existing_chrome", "chrome_user_data_dir",
+            "chrome_profile_name", "chrome_debugging_address",
             "parallel_accounts", "schedule_cron", "session_persistence",
             "session_dir", "db_path", "encrypt_credentials",
             "credentials_key_env", "screenshot_on_failure", "screenshot_dir",
+            "selector_cache_path", "selector_diagnostics_dir",
+            "selector_fallback_wait", "selenium_implicit_wait",
+            "chrome_extension_healer_enabled", "chrome_extension_path",
+            "chrome_extension_bridge_timeout_ms", "chrome_extension_min_confidence",
         }
         for key in simple_fields:
             if key in data:
@@ -121,10 +144,21 @@ class BotConfig:
             "rotate_user_agent": "rotate_user_agent",
             "randomize_actions": "randomize_actions",
             "human_mouse": "human_mouse",
+            "manual_login": "manual_login",
+            "use_existing_chrome": "use_existing_chrome",
+            "chrome_user_data_dir": "chrome_user_data_dir",
+            "chrome_profile_name": "chrome_profile_name",
+            "chrome_debugging_address": "chrome_debugging_address",
+            "chrome_extension_healer_enabled": "chrome_extension_healer_enabled",
+            "chrome_extension_path": "chrome_extension_path",
             "parallel": "parallel_accounts",
             "schedule": "schedule_cron",
             "session_persistence": "session_persistence",
             "screenshot_on_failure": "screenshot_on_failure",
+            "selector_cache_path": "selector_cache_path",
+            "selector_diagnostics_dir": "selector_diagnostics_dir",
+            "selector_fallback_wait": "selector_fallback_wait",
+            "selenium_implicit_wait": "selenium_implicit_wait",
             "encrypt_credentials": "encrypt_credentials",
             "webhook_url": "webhook.url",
         }
@@ -152,6 +186,19 @@ class BotConfig:
             "REDDIT_BOT_DRY_RUN": "dry_run",
             "REDDIT_BOT_DB_PATH": "db_path",
             "REDDIT_BOT_WEBHOOK_URL": "webhook.url",
+            "REDDIT_BOT_MANUAL_LOGIN": "manual_login",
+            "REDDIT_BOT_USE_EXISTING_CHROME": "use_existing_chrome",
+            "REDDIT_BOT_CHROME_USER_DATA_DIR": "chrome_user_data_dir",
+            "REDDIT_BOT_CHROME_PROFILE_NAME": "chrome_profile_name",
+            "REDDIT_BOT_CHROME_DEBUGGING_ADDRESS": "chrome_debugging_address",
+            "REDDIT_BOT_SELECTOR_CACHE_PATH": "selector_cache_path",
+            "REDDIT_BOT_SELECTOR_DIAGNOSTICS_DIR": "selector_diagnostics_dir",
+            "REDDIT_BOT_SELECTOR_FALLBACK_WAIT": "selector_fallback_wait",
+            "REDDIT_BOT_SELENIUM_IMPLICIT_WAIT": "selenium_implicit_wait",
+            "REDDIT_BOT_CHROME_EXTENSION_HEALER_ENABLED": "chrome_extension_healer_enabled",
+            "REDDIT_BOT_CHROME_EXTENSION_PATH": "chrome_extension_path",
+            "REDDIT_BOT_CHROME_EXTENSION_BRIDGE_TIMEOUT_MS": "chrome_extension_bridge_timeout_ms",
+            "REDDIT_BOT_CHROME_EXTENSION_MIN_CONFIDENCE": "chrome_extension_min_confidence",
         }
         for env_key, config_key in env_map.items():
             value = os.environ.get(env_key)
@@ -167,5 +214,9 @@ class BotConfig:
                 attr = getattr(self, config_key)
                 if isinstance(attr, bool):
                     setattr(self, config_key, value.lower() in ("1", "true", "yes"))
+                elif isinstance(attr, int):
+                    setattr(self, config_key, int(value))
+                elif isinstance(attr, float):
+                    setattr(self, config_key, float(value))
                 else:
                     setattr(self, config_key, value)

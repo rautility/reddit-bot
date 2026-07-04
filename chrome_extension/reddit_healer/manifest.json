@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Reddit Bot Healer",
+  "version": "0.2.0",
+  "description": "Inspects Reddit controls and streams structured DOM, network, and console events to the bot.",
+  "host_permissions": [
+    "https://www.reddit.com/*",
+    "https://reddit.com/*",
+    "https://old.reddit.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.reddit.com/*",
+        "https://reddit.com/*",
+        "https://old.reddit.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page_bridge.js"
+      ],
+      "matches": [
+        "https://www.reddit.com/*",
+        "https://reddit.com/*",
+        "https://old.reddit.com/*"
+      ]
+    }
+  ]
+}

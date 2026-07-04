@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
-
 from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
 
@@ -24,25 +21,35 @@ class SaveAction(BaseAction):
         self._navigate(link)
         Timeouts.med()
 
-        try:
-            # Try the more options menu first
-            more_button = self._find_with_fallbacks(
+        more_button = self._find_self_healing(
+            "more_options",
+            ["more options", "more"],
+            legacy_locators=(
                 (By.CSS_SELECTOR, "button[aria-label='more options']"),
                 (By.CSS_SELECTOR, "button[id*='post-action-bar']"),
-            )
-            self._click(more_button)
-            Timeouts.srt()
+            ),
+        )
+        if more_button is None:
+            return ActionResult(success=False, action="save", link=link, message="Could not find post options menu")
 
-            save_button = self._find_with_fallbacks(
+        self._click(more_button)
+        Timeouts.srt()
+
+        save_button = self._find_self_healing(
+            "save",
+            ["save"],
+            legacy_locators=(
                 (By.CSS_SELECTOR, "li[role='menuitem'] button:has(span)"),
                 (By.XPATH, "//button[contains(text(), 'Save')]"),
                 (By.XPATH, "//menuitem[contains(text(), 'Save')]"),
-            )
-            self._click(save_button)
-            Timeouts.med()
-            return ActionResult(success=True, action="save", link=link, message="Post saved")
-        except NoSuchElementException as e:
-            return ActionResult(success=False, action="save", link=link, message=str(e))
+            ),
+        )
+        if save_button is None:
+            return ActionResult(success=False, action="save", link=link, message="Could not find Save menu item")
+
+        self._click(save_button)
+        Timeouts.med()
+        return ActionResult(success=True, action="save", link=link, message="Post saved")
 
 
 class HideAction(BaseAction):
@@ -57,20 +64,31 @@ class HideAction(BaseAction):
         self._navigate(link)
         Timeouts.med()
 
-        try:
-            more_button = self._find_with_fallbacks(
+        more_button = self._find_self_healing(
+            "more_options",
+            ["more options", "more"],
+            legacy_locators=(
                 (By.CSS_SELECTOR, "button[aria-label='more options']"),
                 (By.CSS_SELECTOR, "button[id*='post-action-bar']"),
-            )
-            self._click(more_button)
-            Timeouts.srt()
+            ),
+        )
+        if more_button is None:
+            return ActionResult(success=False, action="hide", link=link, message="Could not find post options menu")
 
-            hide_button = self._find_with_fallbacks(
+        self._click(more_button)
+        Timeouts.srt()
+
+        hide_button = self._find_self_healing(
+            "hide",
+            ["hide"],
+            legacy_locators=(
                 (By.XPATH, "//button[contains(text(), 'Hide')]"),
                 (By.XPATH, "//menuitem[contains(text(), 'Hide')]"),
-            )
-            self._click(hide_button)
-            Timeouts.med()
-            return ActionResult(success=True, action="hide", link=link, message="Post hidden")
-        except NoSuchElementException as e:
-            return ActionResult(success=False, action="hide", link=link, message=str(e))
+            ),
+        )
+        if hide_button is None:
+            return ActionResult(success=False, action="hide", link=link, message="Could not find Hide menu item")
+
+        self._click(hide_button)
+        Timeouts.med()
+        return ActionResult(success=True, action="hide", link=link, message="Post hidden")

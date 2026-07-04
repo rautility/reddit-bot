@@ -26,15 +26,33 @@ class JoinCommunityAction(BaseAction):
         Timeouts.med()
         self._handle_nsfw()
 
-        join_button = self._find_with_fallbacks(
+        legacy_locators = (
             (By.CSS_SELECTOR, "button[id*='join-button']"),
             (By.XPATH, "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button"),
             (By.XPATH, '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button'),
         )
+        join_button = self._find_self_healing(
+            action_name,
+            ["join", "joined", "leave"],
+            legacy_locators=legacy_locators,
+        )
+        if join_button is None:
+            return ActionResult(
+                success=False,
+                action=action_name,
+                link=link,
+                message="Could not find community join/leave button",
+            )
 
-        button_text = join_button.text.lower()
+        button_text = (
+            join_button.text
+            or join_button.get_attribute("aria-label")
+            or ""
+        ).lower()
 
-        if (join and button_text == "join") or (not join and button_text == "joined"):
+        if (join and "join" in button_text and "joined" not in button_text) or (
+            not join and ("joined" in button_text or "leave" in button_text)
+        ):
             self._click(join_button)
             Timeouts.med()
             return ActionResult(success=True, action=action_name, link=link, message=f"Successfully {'joined' if join else 'left'}")

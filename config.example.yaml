@@ -15,6 +15,20 @@ rotate_user_agent: false
 randomize_actions: false
 human_mouse: false
 
+# Preferred local mode: use an already-authenticated saved Chrome debug profile
+# instead of scripted Reddit login.
+use_existing_chrome: false
+# Default saved debug profile:
+# profile_name: "Chrome Reddit Bot Debug Profile"
+# chrome_user_data_dir: "/Users/raulvecchione/Library/Application Support/Chrome Reddit Bot Debug Profile"
+# chrome_debugging_address: "127.0.0.1:9222"
+# For another Reddit account, create another saved profile and port, for example:
+# profile_name: "Chrome Reddit Bot Debug Profile - account2"
+# chrome_user_data_dir: "/Users/raulvecchione/Library/Application Support/Chrome Reddit Bot Debug Profile - account2"
+# chrome_debugging_address: "127.0.0.1:9223"
+# Keep login manual in that Chrome profile. Do not script Reddit login unless
+# explicitly requested for a separate test.
+
 proxy:
   enabled: false
   proxy_list_path: "proxies.txt"
@@ -41,6 +55,22 @@ credentials_key_env: "REDDIT_BOT_KEY"
 screenshot_on_failure: false
 screenshot_dir: "screenshots"
 db_path: "reddit_bot.db"
+
+# Self-healing selectors
+selector_cache_path: ".selector-healing/reddit_selectors.json"
+selector_diagnostics_dir: ".selector-healing/diagnostics"
+selector_fallback_wait: 1.0
+selenium_implicit_wait: 20
+
+# Chrome extension healer bridge
+# Loads chrome_extension/reddit_healer into Selenium-owned Chrome and lets vote
+# actions ask the extension for high-confidence Reddit UI controls. For
+# --use-existing-chrome with --chrome-debugging-address, make sure the saved
+# Chrome profile already has the extension loaded/enabled.
+chrome_extension_healer_enabled: false
+chrome_extension_path: "chrome_extension/reddit_healer"
+chrome_extension_bridge_timeout_ms: 1500
+chrome_extension_min_confidence: 0.72
 
 webhook:
   enabled: false

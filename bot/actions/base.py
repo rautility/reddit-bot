@@ -42,7 +42,26 @@ class BaseAction(ABC):
 
     def _navigate(self, url: str) -> None:
         """Navigate to a URL."""
-        self.driver.get(url)
+        from selenium.common.exceptions import WebDriverException
+        from bot.utils.timeouts import Timeouts
+
+        attempts = 2
+        last_error = None
+        for attempt in range(attempts):
+            try:
+                self.driver.get(url)
+                return
+            except WebDriverException as exc:
+                last_error = exc
+                if attempt == 0:
+                    self.logger.warning(
+                        f"Primary navigation failed (attempt {attempt + 1}/{attempts}); retrying with JS navigation."
+                    )
+                    self.driver.execute_script("window.location.href = arguments[0];", url)
+                    Timeouts.med()
+                else:
+                    break
+        raise last_error
 
     def _find_with_fallbacks(self, *locators):
         """Try multiple locator strategies, return the first match."""
@@ -55,10 +74,28 @@ class BaseAction(ABC):
                 continue
         return self.driver.find_element(*locators[-1])
 
-    def _click(self, element) -> None:
-        """Click an element, using human-like movement if configured."""
+    def _find_self_healing(
+        self,
+        intent: str,
+        labels: list[str],
+        *,
+        legacy_locators=(),
+        reject_labels=(),
+    ):
+        """Find a Reddit UI element using cached selectors and runtime healing."""
+        from bot.utils.self_healing import SelfHealingLocator
+
+        return SelfHealingLocator(self.driver, self.config, self.logger).find(
+            intent,
+            labels,
+            legacy_locators=legacy_locators,
+            reject_labels=reject_labels,
+        )
+
+    def _click(self, element) -> dict:
+        """Click an element, using browser pointer actions, and return diagnostics."""
         from bot.utils.mouse import human_click
-        human_click(self.driver, element, enabled=self.config.human_mouse)
+        return human_click(self.driver, element, enabled=self.config.human_mouse)
 
     def _type_like_human(self, element, text: str) -> None:
         """Type text character by character with random delays."""

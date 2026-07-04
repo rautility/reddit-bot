@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
-
 from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
 
@@ -23,21 +21,28 @@ class FollowAction(BaseAction):
         self._navigate(link)
         Timeouts.med()
 
-        try:
-            follow_btn = self._find_with_fallbacks(
+        follow_btn = self._find_self_healing(
+            "follow",
+            ["follow", "following"],
+            legacy_locators=(
                 (By.CSS_SELECTOR, "button[id*='follow-button']"),
                 (By.XPATH, "//button[contains(text(), 'Follow')]"),
+            ),
+        )
+        if follow_btn is None:
+            return ActionResult(
+                success=False,
+                action="follow",
+                link=link,
+                message="Could not find follow button",
             )
 
-            btn_text = follow_btn.text.lower()
-            if btn_text == "follow":
-                self._click(follow_btn)
-                Timeouts.med()
-                return ActionResult(success=True, action="follow", link=link, message="User followed")
-            else:
-                return ActionResult(success=True, action="follow", link=link, message="Already following")
-        except NoSuchElementException as e:
-            return ActionResult(success=False, action="follow", link=link, message=str(e))
+        btn_text = (follow_btn.text or follow_btn.get_attribute("aria-label") or "").lower()
+        if "follow" in btn_text and "following" not in btn_text:
+            self._click(follow_btn)
+            Timeouts.med()
+            return ActionResult(success=True, action="follow", link=link, message="User followed")
+        return ActionResult(success=True, action="follow", link=link, message="Already following")
 
 
 class UnfollowAction(BaseAction):
@@ -52,19 +57,26 @@ class UnfollowAction(BaseAction):
         self._navigate(link)
         Timeouts.med()
 
-        try:
-            follow_btn = self._find_with_fallbacks(
+        follow_btn = self._find_self_healing(
+            "unfollow",
+            ["following", "unfollow", "follow"],
+            legacy_locators=(
                 (By.CSS_SELECTOR, "button[id*='follow-button']"),
                 (By.XPATH, "//button[contains(text(), 'Following')]"),
                 (By.XPATH, "//button[contains(text(), 'Unfollow')]"),
+            ),
+        )
+        if follow_btn is None:
+            return ActionResult(
+                success=False,
+                action="unfollow",
+                link=link,
+                message="Could not find follow/unfollow button",
             )
 
-            btn_text = follow_btn.text.lower()
-            if btn_text in ("following", "unfollow"):
-                self._click(follow_btn)
-                Timeouts.med()
-                return ActionResult(success=True, action="unfollow", link=link, message="User unfollowed")
-            else:
-                return ActionResult(success=True, action="unfollow", link=link, message="Not following")
-        except NoSuchElementException as e:
-            return ActionResult(success=False, action="unfollow", link=link, message=str(e))
+        btn_text = (follow_btn.text or follow_btn.get_attribute("aria-label") or "").lower()
+        if "following" in btn_text or "unfollow" in btn_text:
+            self._click(follow_btn)
+            Timeouts.med()
+            return ActionResult(success=True, action="unfollow", link=link, message="User unfollowed")
+        return ActionResult(success=True, action="unfollow", link=link, message="Not following")

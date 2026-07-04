@@ -16,6 +16,7 @@
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Saved Chrome Debug Profiles](#saved-chrome-debug-profiles)
 - [Configuration](#configuration)
 - [Input Formats](#input-formats)
 - [Supported Actions](#supported-actions)
@@ -145,6 +146,72 @@ python main.py -a accounts.txt -l links.txt --dry-run --verbose
 
 ---
 
+## Saved Chrome Debug Profiles
+
+The preferred local workflow is to use manually authenticated Chrome profiles and attach through Chrome DevTools. This avoids scripted Reddit login and lets the Reddit Bot Healer extension identify controls before actions are clicked.
+
+Default saved profile:
+
+| Name | Path | DevTools |
+|------|------|----------|
+| `Chrome Reddit Bot Debug Profile` | `/Users/raulvecchione/Library/Application Support/Chrome Reddit Bot Debug Profile` | `127.0.0.1:9222` |
+
+Open the default profile:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py open-profile
+```
+
+Open a saved profile for another Reddit account on a different port:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py open-profile \
+  --profile-name "Chrome Reddit Bot Debug Profile - account2" \
+  --port 9223 \
+  --url "https://www.reddit.com/login/"
+```
+
+Log in manually in that Chrome window. Do not automate Reddit login for this workflow. The helper passes `--load-extension=chrome_extension/reddit_healer`; if Chrome does not show `Reddit Bot Healer` under `chrome://extensions`, enable Developer mode and load that unpacked extension manually.
+
+Check the extension bridge:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py ping-bridge \
+  --debug-address 127.0.0.1:9223
+```
+
+Find a control candidate before clicking:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py find-control \
+  --debug-address 127.0.0.1:9223 \
+  --intent downvote \
+  --url "https://www.reddit.com/r/example/comments/abc/title/"
+```
+
+The expected action report includes candidate confidence, bounding box, state, and evidence. Click only when the command or user request explicitly calls for a real action.
+
+Run the bot through an attached profile:
+
+```bash
+.venv/bin/python main.py -a accounts.txt -l links.txt --verbose \
+  --use-existing-chrome \
+  --chrome-debugging-address 127.0.0.1:9223 \
+  --chrome-extension-healer
+```
+
+For attach mode, `accounts.txt` is only used as the account label. The active Reddit account is whatever is manually logged in inside the Chrome profile attached to that port. Run one saved profile/port at a time.
+
+Print reusable setup details for any profile:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py profile-info \
+  --profile-name "Chrome Reddit Bot Debug Profile - account2" \
+  --port 9223
+```
+
+---
+
 ## Configuration
 
 Settings can be provided via YAML config file, CLI flags, or environment variables. Priority order (highest to lowest):
@@ -207,6 +274,18 @@ See [`config.example.yaml`](config.example.yaml) for the full template with comm
 | `REDDIT_BOT_DRY_RUN` | Enable dry run (`true`/`false`) |
 | `REDDIT_BOT_DB_PATH` | Path to SQLite database |
 | `REDDIT_BOT_WEBHOOK_URL` | Webhook URL for notifications |
+| `REDDIT_BOT_USE_EXISTING_CHROME` | Use already-authenticated Chrome profile/instance (`true`/`false`) |
+| `REDDIT_BOT_CHROME_USER_DATA_DIR` | Path to Chrome user data directory |
+| `REDDIT_BOT_CHROME_PROFILE_NAME` | Chrome profile folder name (e.g. `Default`) |
+| `REDDIT_BOT_CHROME_DEBUGGING_ADDRESS` | Existing Chrome debugger address (e.g. `127.0.0.1:9222`) |
+| `REDDIT_BOT_SELECTOR_CACHE_PATH` | Path for healed Reddit selector cache |
+| `REDDIT_BOT_SELECTOR_DIAGNOSTICS_DIR` | Directory for selector diagnostics when healing fails |
+| `REDDIT_BOT_SELECTOR_FALLBACK_WAIT` | Short wait for legacy selector fallbacks |
+| `REDDIT_BOT_SELENIUM_IMPLICIT_WAIT` | Default Selenium implicit wait |
+| `REDDIT_BOT_CHROME_EXTENSION_HEALER_ENABLED` | Enable the Reddit healer Chrome extension bridge |
+| `REDDIT_BOT_CHROME_EXTENSION_PATH` | Path to the unpacked healer extension |
+| `REDDIT_BOT_CHROME_EXTENSION_BRIDGE_TIMEOUT_MS` | Timeout for extension bridge requests |
+| `REDDIT_BOT_CHROME_EXTENSION_MIN_CONFIDENCE` | Minimum control confidence required before clicking |
 
 ---
 
@@ -373,6 +452,48 @@ python main.py -a accounts.txt -l links.txt --session-persistence
 
 Sessions are stored in `.sessions/` as JSON cookie files.
 
+### Use your already logged-in Chrome
+
+If you want to avoid credentials entirely, use the saved debug profile workflow above and attach to its DevTools address:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py open-profile \
+  --profile-name "Chrome Reddit Bot Debug Profile" \
+  --port 9222
+```
+
+Then run:
+
+```bash
+.venv/bin/python main.py -a accounts.txt -l links.txt \
+  --use-existing-chrome \
+  --chrome-debugging-address 127.0.0.1:9222 \
+  --chrome-extension-healer
+```
+
+You can still point directly to a Chrome user-data directory when you are not attaching to an already running debugger:
+
+```bash
+python main.py -a accounts.txt -l links.txt \
+  --use-existing-chrome \
+  --chrome-user-data-dir "/Users/<you>/Library/Application Support/Chrome Reddit Bot Debug Profile"
+```
+
+Attach mode is safer for this project because it keeps login manual, exposes `127.0.0.1:<port>` for inspection, and works with the Healer extension already loaded in that profile.
+
+### Saved profile per account
+
+Use one Chrome user-data-dir and one port per Reddit account. Example:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py open-profile \
+  --profile-name "Chrome Reddit Bot Debug Profile - account3" \
+  --port 9224 \
+  --url "https://www.reddit.com/login/"
+```
+
+After manual login, target that profile with `--chrome-debugging-address 127.0.0.1:9224`.
+
 ### Daily Quotas
 
 Set in config:
@@ -467,6 +588,41 @@ python main.py -a accounts.txt -l links.txt --screenshot-on-failure
 
 Screenshots are saved to `screenshots/` with descriptive filenames including the action name and timestamp.
 
+### Self-Healing Selectors
+
+Reddit changes UI markup frequently. The bot keeps a local selector cache in `.selector-healing/reddit_selectors.json` and writes compact diagnostics to `.selector-healing/diagnostics/` when an action cannot find a control.
+
+When a normal selector misses, actions can run a browser-side probe that logs a `reddit-bot:self-healing` response in the page console, reads the structured result back through Selenium, and stores the discovered selector for future runs.
+
+### Chrome Extension Healer
+
+The repo includes an unpacked Chrome extension at `chrome_extension/reddit_healer`. When enabled, vote actions ask the extension for a control candidate before falling back to Selenium selectors. The extension observes Reddit from inside Chrome, including dynamic DOM state, open shadow DOM, button attribute changes, clicks, page console logs, and fetch/XHR responses.
+
+Enable it in config:
+
+```yaml
+chrome_extension_healer_enabled: true
+chrome_extension_path: "chrome_extension/reddit_healer"
+chrome_extension_min_confidence: 0.8
+```
+
+Or from the CLI:
+
+```bash
+python main.py -a accounts.txt -l links.txt --chrome-extension-healer
+```
+
+For Chrome launched by the bot, the extension is loaded automatically from `chrome_extension_path`. For `--use-existing-chrome --chrome-debugging-address`, install or load the unpacked extension in that Chrome profile before running the bot.
+
+When operating through saved debug profiles, use the helper first:
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py ping-bridge --debug-address 127.0.0.1:9222
+.venv/bin/python scripts/reddit_healer_debug.py find-control --debug-address 127.0.0.1:9222 --intent upvote --url "<POST_URL>"
+```
+
+Report the returned best candidate's confidence, bounding box, state, and evidence before executing the click in manual testing tasks.
+
 ---
 
 ## Database Tracking
@@ -519,6 +675,10 @@ The Docker image automatically runs in headless mode.
 usage: reddit-bot [-h] [-a ACCOUNTS] [-l LINKS] [-c CONFIG] [-v]
                   [--headless] [--dry-run] [--proxy-list PROXY_LIST]
                   [--rotate-ua] [--randomize-actions] [--human-mouse]
+                  [--manual-login] [--use-existing-chrome]
+                  [--chrome-user-data-dir CHROME_USER_DATA_DIR]
+                  [--chrome-profile-name CHROME_PROFILE_NAME]
+                  [--chrome-debugging-address CHROME_DEBUGGING_ADDRESS]
                   [--parallel PARALLEL] [--schedule SCHEDULE]
                   [--session-persistence] [--encrypt-credentials]
                   [--screenshot-on-failure] [--webhook-url WEBHOOK_URL]
@@ -537,6 +697,14 @@ options:
   --rotate-ua           Randomize User-Agent per session
   --randomize-actions   Shuffle action order per account
   --human-mouse         Use Bezier curve mouse movements
+  --manual-login        Pause for manual browser login when automatic login fails
+  --use-existing-chrome Use an already logged-in Chrome instance instead of automated login
+  --chrome-user-data-dir CHROME_USER_DATA_DIR
+                        Chrome user-data-dir to reuse profile/session
+  --chrome-profile-name CHROME_PROFILE_NAME
+                        Chrome profile directory under user-data-dir (default: Default)
+  --chrome-debugging-address CHROME_DEBUGGING_ADDRESS
+                        Existing Chrome debugger address (e.g. 127.0.0.1:9222)
   --parallel N          Number of parallel browser instances
   --schedule CRON       Cron expression for scheduled runs
   --session-persistence Save/restore browser sessions

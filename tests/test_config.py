@@ -18,6 +18,13 @@ class TestBotConfigDefaults:
         assert config.parallel_accounts == 1
         assert config.proxy.enabled is False
         assert config.rate_limit.daily_action_quota == 0
+        assert config.selector_cache_path == ".selector-healing/reddit_selectors.json"
+        assert config.selector_fallback_wait == 1.0
+        assert config.selenium_implicit_wait == 20
+        assert config.chrome_extension_healer_enabled is False
+        assert config.chrome_extension_path == "chrome_extension/reddit_healer"
+        assert config.chrome_extension_bridge_timeout_ms == 1500
+        assert config.chrome_extension_min_confidence == 0.72
 
     def test_from_dict(self):
         data = {
@@ -75,7 +82,17 @@ class TestBotConfigMerge:
     def test_merge_env_vars(self, monkeypatch):
         monkeypatch.setenv("REDDIT_BOT_HEADLESS", "true")
         monkeypatch.setenv("REDDIT_BOT_DRY_RUN", "1")
+        monkeypatch.setenv("REDDIT_BOT_SELECTOR_FALLBACK_WAIT", "0.5")
+        monkeypatch.setenv("REDDIT_BOT_SELENIUM_IMPLICIT_WAIT", "10")
+        monkeypatch.setenv("REDDIT_BOT_CHROME_EXTENSION_HEALER_ENABLED", "true")
+        monkeypatch.setenv("REDDIT_BOT_CHROME_EXTENSION_BRIDGE_TIMEOUT_MS", "2500")
+        monkeypatch.setenv("REDDIT_BOT_CHROME_EXTENSION_MIN_CONFIDENCE", "0.9")
         config = BotConfig()
         config.merge_env_vars()
         assert config.headless is True
         assert config.dry_run is True
+        assert config.selector_fallback_wait == 0.5
+        assert config.selenium_implicit_wait == 10
+        assert config.chrome_extension_healer_enabled is True
+        assert config.chrome_extension_bridge_timeout_ms == 2500
+        assert config.chrome_extension_min_confidence == 0.9

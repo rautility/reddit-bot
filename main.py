@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from args import cmdline_args
 from bot import RedditBot, BotConfig, GhostLogger
+from bot.actions.base import ActionResult
 from bot.reporting import ExecutionSummary, send_webhook, setup_structured_logger
 from bot.utils.credentials import read_accounts, read_accounts_from_env, Account
 from bot.utils.input_parser import parse_links_file, ActionEntry
@@ -50,6 +51,44 @@ def load_accounts(config: BotConfig) -> list[Account]:
     )
 
 
+def _browser_startup_failure_summary(
+    account: Account,
+    error: Exception,
+    logger: logging.Logger,
+) -> ExecutionSummary:
+    """Record browser startup failures without surfacing a Python traceback."""
+    message = str(error)
+    logger.error(f"Browser startup failed for {account.username}: {message}")
+    summary = ExecutionSummary()
+    summary.add(
+        ActionResult(
+            success=False,
+            action="browser_startup",
+            link="",
+            message=message,
+        )
+    )
+    summary.finalize()
+    return summary
+
+
+def _add_account_failure(
+    summary: ExecutionSummary,
+    action: str,
+    message: str,
+) -> ExecutionSummary:
+    """Add a failed account-level result to an existing summary."""
+    summary.add(
+        ActionResult(
+            success=False,
+            action=action,
+            link="",
+            message=message,
+        )
+    )
+    return summary
+
+
 def run_account(
     account: Account,
     entries: list[ActionEntry],
@@ -57,14 +96,55 @@ def run_account(
     logger: logging.Logger,
 ) -> ExecutionSummary:
     """Run all actions for a single account. Used for both sequential and parallel execution."""
-    with RedditBot(config=config) as bot:
-        # Try session restore first
-        if not bot.login_with_session(account.username):
-            try:
-                bot.login(account.username, account.password)
-            except RuntimeError:
-                logger.error(f"Login failed for {account.username}")
-                return bot.summary
+    try:
+        bot_context = RedditBot(config=config)
+    except Exception as exc:
+        return _browser_startup_failure_summary(account, exc, logger)
+
+    with bot_context as bot:
+        if config.use_existing_chrome:
+            if not bot.login_with_existing_chrome(account.username):
+                if config.manual_login:
+                    try:
+                        bot.login_interactively(account.username)
+                    except RuntimeError as interactive_error:
+                        message = (
+                            f"Manual login failed for {account.username}: "
+                            f"{interactive_error}"
+                        )
+                        logger.error(message)
+                        _add_account_failure(bot.summary, "manual_login", message)
+                        return bot.summary
+                else:
+                    message = (
+                        f"Existing Chrome session is not authenticated for "
+                        f"{account.username}"
+                    )
+                    logger.error(message)
+                    _add_account_failure(bot.summary, "existing_chrome_auth", message)
+                    return bot.summary
+        else:
+            # Try session restore first, then manual login if requested.
+            if not bot.login_with_session(account.username):
+                if config.manual_login:
+                    try:
+                        bot.login_interactively(account.username)
+                    except RuntimeError as interactive_error:
+                        message = (
+                            f"Manual login failed for {account.username}: "
+                            f"{interactive_error}"
+                        )
+                        logger.error(message)
+                        _add_account_failure(bot.summary, "manual_login", message)
+                        return bot.summary
+                else:
+                    try:
+                        bot.login(account.username, account.password)
+                    except Exception as exc:
+                        message = f"Login failed for {account.username}: {exc}"
+                        logger.error(message)
+                        _add_account_failure(bot.summary, "login", message)
+                        return bot.summary
 
         # Execute actions
         action_list = list(entries)
@@ -123,6 +203,30 @@ def run_scheduled(config: BotConfig, accounts: list[Account], entries: list[Acti
     scheduler.run()
 
 
+def _execute_dry_run(
+    accounts: list[Account],
+    entries: list[ActionEntry],
+    logger,
+) -> ExecutionSummary:
+    """Preview actions without launching a browser or touching Reddit."""
+    summary = ExecutionSummary()
+
+    for account in accounts:
+        logger.info(f"Dry run for {account.username}: {len(entries)} actions")
+        for entry in entries:
+            result = ActionResult(
+                success=True,
+                action=entry.action,
+                link=entry.link,
+                message=f"Would execute for {account.username}",
+            )
+            summary.add(result)
+            logger.info(str(result))
+
+    summary.finalize()
+    return summary
+
+
 def _execute_run(
     config: BotConfig,
     accounts: list[Account],
@@ -130,6 +234,15 @@ def _execute_run(
     logger,
 ) -> ExecutionSummary:
     """Execute the full run (all accounts, all actions)."""
+    if config.use_existing_chrome and config.parallel_accounts > 1:
+        logger.warning(
+            "Existing Chrome mode is best run sequentially; forcing parallel_accounts = 1"
+        )
+        config.parallel_accounts = 1
+
+    if config.dry_run:
+        return _execute_dry_run(accounts, entries, logger)
+
     combined_summary = ExecutionSummary()
 
     if config.parallel_accounts > 1:

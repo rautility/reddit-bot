@@ -8,8 +8,12 @@ import logging
 import os
 import random
 import time
+import sys
 from pathlib import Path
 from typing import Optional
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -17,7 +21,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, SessionNotCreatedException
 from webdriver_manager.chrome import ChromeDriverManager
 
 from .config import BotConfig
@@ -84,7 +88,12 @@ class RedditBot:
             Path(self.config.session_dir).mkdir(parents=True, exist_ok=True)
 
         # Initialize webdriver
-        self._init_driver()
+        try:
+            self._init_driver()
+        except Exception:
+            if self.db:
+                self.db.close()
+            raise
 
     def _init_driver(self) -> None:
         """Initialize Chrome webdriver with all configured options."""
@@ -92,12 +101,18 @@ class RedditBot:
         chrome_options = webdriver.ChromeOptions()
         chrome_options.add_argument("--log-level=3")
         chrome_options.add_argument("--lang=en")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option("useAutomationExtension", False)
-        chrome_options.add_experimental_option(
-            "prefs", {"profile.default_content_setting_values.notifications": 2}
-        )
+
+        # Some Chrome/ChromeDriver combinations reject these automation-tuning flags
+        # when attaching to an already running Chrome instance.
+        if not self.config.use_existing_chrome:
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option(
+                "excludeSwitches", ["enable-automation"]
+            )
+            chrome_options.add_experimental_option("useAutomationExtension", False)
+            chrome_options.add_experimental_option(
+                "prefs", {"profile.default_content_setting_values.notifications": 2}
+            )
 
         # Headless mode
         if self.config.headless:
@@ -105,6 +120,23 @@ class RedditBot:
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
+
+        if self.config.chrome_extension_healer_enabled:
+            extension_path = Path(self.config.chrome_extension_path).expanduser()
+            if not extension_path.is_absolute():
+                extension_path = Path.cwd() / extension_path
+            if extension_path.exists() and not self.config.use_existing_chrome:
+                chrome_options.add_argument(f"--load-extension={extension_path}")
+                self.logger.info(f"Loading Reddit healer extension from {extension_path}")
+            elif self.config.use_existing_chrome:
+                self.logger.info(
+                    "Chrome extension healer enabled; ensure the extension is already "
+                    "loaded in the attached Chrome session."
+                )
+            else:
+                self.logger.warning(
+                    f"Chrome extension healer enabled but extension path does not exist: {extension_path}"
+                )
 
         # User-Agent rotation
         if self.config.rotate_user_agent:
@@ -118,8 +150,58 @@ class RedditBot:
             chrome_options.add_argument(proxy.chrome_arg)
             self.logger.info(f"Using proxy: {proxy.address}")
 
-        service = Service(ChromeDriverManager().install())
-        self.dv = webdriver.Chrome(service=service, options=chrome_options)
+        # Existing Chrome session support (remote debug or local profile reuse)
+        if self.config.use_existing_chrome:
+            if self.config.chrome_debugging_address:
+                debugger_address = self._ensure_chrome_debugger_reachable(
+                    self.config.chrome_debugging_address
+                )
+                chrome_options.add_experimental_option(
+                    "debuggerAddress",
+                    debugger_address,
+                )
+                self.logger.info(
+                    f"Attaching to existing Chrome at {debugger_address}"
+                )
+            elif self.config.chrome_user_data_dir:
+                chrome_user_data_dir = str(
+                    Path(self.config.chrome_user_data_dir).expanduser()
+                )
+                chrome_options.add_argument(f"--user-data-dir={chrome_user_data_dir}")
+                if self.config.chrome_profile_name:
+                    chrome_options.add_argument(
+                        f"--profile-directory={self.config.chrome_profile_name}"
+                    )
+                    self.logger.info(
+                        f"Using existing Chrome profile {self.config.chrome_profile_name} "
+                        f"from {chrome_user_data_dir}"
+                    )
+                else:
+                    self.logger.info(f"Using existing Chrome user data dir {chrome_user_data_dir}")
+
+        try:
+            service = Service(ChromeDriverManager().install())
+        except Exception as exc:
+            fallback_path = os.environ.get("REDDIT_BOT_CHROMEDRIVER", "/usr/local/bin/chromedriver")
+            if not fallback_path or not Path(fallback_path).exists():
+                raise RuntimeError(f"Failed to auto-resolve ChromeDriver and fallback path is invalid: {fallback_path}") from exc
+            self.logger.warning(
+                f"Using fallback ChromeDriver at {fallback_path} because manager failed: {exc}"
+            )
+            service = Service(fallback_path)
+        try:
+            self.dv = webdriver.Chrome(service=service, options=chrome_options)
+        except SessionNotCreatedException as exc:
+            if self.config.use_existing_chrome and self.config.chrome_debugging_address:
+                raise RuntimeError(
+                    self._chrome_debugging_help(
+                        self.config.chrome_debugging_address,
+                        "ChromeDriver could not attach to the running Chrome debugger.",
+                    )
+                ) from exc
+            raise
+        self.dv.set_page_load_timeout(180)
+        self.dv.implicitly_wait(self.config.selenium_implicit_wait)
 
         # Remove webdriver navigator flag
         self.dv.execute_script(
@@ -127,6 +209,69 @@ class RedditBot:
         )
 
         self.logger.info("Webdriver booted up")
+
+    @staticmethod
+    def _chrome_debugger_endpoint(address: str) -> tuple[str, str, int]:
+        """Return normalized debugger address, probe endpoint, and port."""
+        raw_address = address.strip()
+        parsed = urlparse(raw_address if "://" in raw_address else f"http://{raw_address}")
+        scheme = parsed.scheme if parsed.scheme in ("http", "https") else "http"
+
+        try:
+            host = parsed.hostname
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid Chrome debugger address '{address}'. Use host:port, for example 127.0.0.1:9222."
+            ) from exc
+
+        if not host or port is None:
+            raise RuntimeError(
+                f"Invalid Chrome debugger address '{address}'. Use host:port, for example 127.0.0.1:9222."
+            )
+
+        display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        normalized_address = f"{display_host}:{port}"
+        return normalized_address, f"{scheme}://{normalized_address}/json/version", port
+
+    @classmethod
+    def _chrome_debugging_help(cls, address: str, reason: str) -> str:
+        try:
+            normalized_address, _, port = cls._chrome_debugger_endpoint(address)
+        except RuntimeError:
+            normalized_address = address
+            port = 9222
+
+        return (
+            f"{reason} Chrome debugger is not reachable at {normalized_address}. "
+            "Start Chrome with remote debugging enabled before using "
+            "--chrome-debugging-address. macOS example: "
+            "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome "
+            f"--remote-debugging-port={port} "
+            "--user-data-dir=/tmp/reddit-bot-chrome-debug"
+        )
+
+    @classmethod
+    def _ensure_chrome_debugger_reachable(
+        cls,
+        address: str,
+        timeout: float = 2.0,
+    ) -> str:
+        normalized_address, endpoint, _ = cls._chrome_debugger_endpoint(address)
+        try:
+            with urlopen(endpoint, timeout=timeout) as response:
+                if getattr(response, "status", 200) >= 400:
+                    raise RuntimeError(f"Chrome debugger returned HTTP {response.status}")
+                response.read(256)
+        except (HTTPError, URLError, OSError, TimeoutError, RuntimeError) as exc:
+            raise RuntimeError(
+                cls._chrome_debugging_help(
+                    normalized_address,
+                    "Unable to connect to the existing Chrome debugger.",
+                )
+            ) from exc
+
+        return normalized_address
 
     def __enter__(self) -> "RedditBot":
         return self
@@ -186,6 +331,151 @@ class RedditBot:
 
         self.logger.info("Logged in successfully.")
 
+    def login_with_existing_chrome(self, username: str) -> bool:
+        """Use the currently running Chrome session/session profile instead of scripted login."""
+        self._current_account = username
+        self.dv.get(DefaultLinksEnum.HOME.value)
+        Timeouts.med()
+
+        authenticated_username = self._reddit_authenticated_username()
+        if not authenticated_username:
+            self.logger.warning(
+                "No authenticated session detected in the attached Chrome profile."
+            )
+            return False
+
+        self._popup_handler()
+        self._cookies_handler()
+
+        if self.config.session_persistence:
+            self._save_session(username)
+
+        self.logger.info(
+            f"Using existing browser authentication for {authenticated_username}"
+        )
+        return True
+
+    def _reddit_authenticated_username(self) -> Optional[str]:
+        """Return the current Reddit username if the browser session is authenticated."""
+        script = """
+            const done = arguments[0];
+            fetch('/api/me.json', {credentials: 'include'})
+                .then(async response => {
+                    let data = null;
+                    try {
+                        data = await response.json();
+                    } catch (error) {
+                        data = {};
+                    }
+                    done({
+                        ok: response.ok,
+                        status: response.status,
+                        name: data && data.name
+                    });
+                })
+                .catch(error => done({ok: false, error: String(error)}));
+        """
+
+        try:
+            result = self.dv.execute_async_script(script)
+        except Exception as exc:
+            self.logger.warning(f"Could not verify Reddit authentication: {exc}")
+            return None
+
+        if not isinstance(result, dict):
+            return None
+
+        name = result.get("name")
+        if result.get("ok") and isinstance(name, str) and name:
+            return name
+
+        session_cookie_name = self._reddit_session_cookie_name()
+        if session_cookie_name:
+            return f"Reddit session cookie ({session_cookie_name})"
+        return None
+
+    def _reddit_session_cookie_name(self) -> Optional[str]:
+        """Return a Reddit auth cookie name when the browser has a logged-in session."""
+        try:
+            cookies = self.dv.get_cookies()
+        except Exception as exc:
+            self.logger.warning(f"Could not inspect Reddit cookies: {exc}")
+            return None
+
+        for cookie in cookies:
+            if cookie.get("name") in {"reddit_session", "token_v2"}:
+                return cookie["name"]
+        return None
+
+    def _wait_for_reddit_authentication(
+        self,
+        username: str,
+        timeout_seconds: int = 600,
+        interval_seconds: float = 2.0,
+    ) -> str:
+        """Wait for a manual Reddit login to complete in the active browser."""
+        deadline = time.time() + timeout_seconds
+        next_log_at = 0.0
+        next_home_refresh_at = 0.0
+
+        while time.time() < deadline:
+            now = time.time()
+            if now >= next_home_refresh_at:
+                with contextlib.suppress(Exception):
+                    self.dv.get(DefaultLinksEnum.HOME.value)
+                    Timeouts.srt()
+                next_home_refresh_at = now + 15
+
+            authenticated_username = self._reddit_authenticated_username()
+            if authenticated_username:
+                self.logger.info("Reddit authentication detected; continuing.")
+                return authenticated_username
+
+            if now >= next_log_at:
+                remaining = max(0, int(deadline - now))
+                self.logger.info(
+                    f"Waiting for Reddit login to complete; {remaining}s remaining."
+                )
+                next_log_at = now + 15
+
+            time.sleep(interval_seconds)
+
+        raise RuntimeError(f"Manual login timeout for user: {username}")
+
+    def login_interactively(self, username: str) -> None:
+        """Pause execution and allow manual browser login, then resume from the logged-in state."""
+        self.logger.info(
+            "Manual login mode: open browser and authenticate, then return here to continue."
+        )
+        self._current_account = username
+        self.dv.get(DefaultLinksEnum.LOGIN.value)
+        Timeouts.med()
+        print(
+            "\nManual login required. Complete login in the opened browser window."
+        )
+
+        if sys.stdin.isatty():
+            input(
+                "Press Enter after logging in. If Reddit is still finishing login, "
+                "the bot will keep checking for up to 10 minutes..."
+            )
+        else:
+            self.logger.info(
+                "No interactive stdin detected; waiting up to 10 minutes for manual login completion."
+            )
+
+        authenticated_username = self._wait_for_reddit_authentication(username)
+
+        self._popup_handler()
+        self._cookies_handler()
+
+        if self.config.session_persistence:
+            self._save_session(username)
+
+        self.logger.info(
+            f"Manual login complete for {authenticated_username} and session saved."
+        )
+
     def login_with_session(self, username: str) -> bool:
         """Attempt to restore a saved session. Returns True if successful."""
         if not self.config.session_persistence:
@@ -223,8 +513,10 @@ class RedditBot:
         """Clear browser data between accounts."""
         self.logger.info("Clearing browser data")
         self.dv.delete_all_cookies()
-        self.dv.execute_script("window.localStorage.clear();")
-        self.dv.execute_script("window.sessionStorage.clear();")
+        with contextlib.suppress(Exception):
+            self.dv.execute_script("window.localStorage.clear();")
+        with contextlib.suppress(Exception):
+            self.dv.execute_script("window.sessionStorage.clear();")
 
     # ─── Action Execution ────────────────────────────────────────
 
