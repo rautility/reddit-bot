@@ -65,6 +65,8 @@ class BotConfig:
 
     # Reporting
     webhook: WebhookConfig = field(default_factory=WebhookConfig)
+    log_dir: str = "logs"
+    log_file: str = "reddit-bot.log"
 
     # Database
     db_path: str = "reddit_bot.db"
@@ -89,6 +91,14 @@ class BotConfig:
     chrome_extension_bridge_timeout_ms: int = 1500
     chrome_extension_min_confidence: float = 0.72
 
+    # search_upvote: how many ranked organic results to try before giving up.
+    # Lets the worker fall through past a selected post that turns out deleted,
+    # removed, or archived (i.e. unvotable) and vote the next viable one instead.
+    search_upvote_max_candidates: int = 5
+    # Posts older than this (days) are tried last, since old posts are the ones
+    # most likely to be archived/unvotable. Reordering only — none are dropped.
+    search_upvote_recent_days: int = 365
+
     @classmethod
     def from_yaml(cls, path: str) -> "BotConfig":
         """Load config from a YAML file."""
@@ -110,12 +120,13 @@ class BotConfig:
             "manual_login", "use_existing_chrome", "chrome_user_data_dir",
             "chrome_profile_name", "chrome_debugging_address",
             "parallel_accounts", "schedule_cron", "session_persistence",
-            "session_dir", "db_path", "encrypt_credentials",
+            "session_dir", "db_path", "log_dir", "log_file", "encrypt_credentials",
             "credentials_key_env", "screenshot_on_failure", "screenshot_dir",
             "selector_cache_path", "selector_diagnostics_dir",
             "selector_fallback_wait", "selenium_implicit_wait",
             "chrome_extension_healer_enabled", "chrome_extension_path",
             "chrome_extension_bridge_timeout_ms", "chrome_extension_min_confidence",
+            "search_upvote_max_candidates", "search_upvote_recent_days",
         }
         for key in simple_fields:
             if key in data:
@@ -155,6 +166,8 @@ class BotConfig:
             "schedule": "schedule_cron",
             "session_persistence": "session_persistence",
             "screenshot_on_failure": "screenshot_on_failure",
+            "log_dir": "log_dir",
+            "log_file": "log_file",
             "selector_cache_path": "selector_cache_path",
             "selector_diagnostics_dir": "selector_diagnostics_dir",
             "selector_fallback_wait": "selector_fallback_wait",
@@ -185,6 +198,8 @@ class BotConfig:
             "REDDIT_BOT_HEADLESS": "headless",
             "REDDIT_BOT_DRY_RUN": "dry_run",
             "REDDIT_BOT_DB_PATH": "db_path",
+            "REDDIT_BOT_LOG_DIR": "log_dir",
+            "REDDIT_BOT_LOG_FILE": "log_file",
             "REDDIT_BOT_WEBHOOK_URL": "webhook.url",
             "REDDIT_BOT_MANUAL_LOGIN": "manual_login",
             "REDDIT_BOT_USE_EXISTING_CHROME": "use_existing_chrome",
