@@ -4,48 +4,50 @@ from __future__ import annotations
 
 import random
 import time
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
     from selenium.webdriver.remote.webelement import WebElement
 
-try:
-    import bezier
-    import numpy as np
+HAS_BEZIER = find_spec("bezier") is not None and find_spec("numpy") is not None
 
-    def _bezier_curve_points(
-        start: tuple[int, int],
-        end: tuple[int, int],
-        num_points: int = 20,
-    ) -> list[tuple[int, int]]:
-        """Generate points along a Bezier curve between start and end."""
-        # Add 1-2 random control points for natural movement
-        ctrl1 = (
-            start[0] + random.randint(-50, 50) + (end[0] - start[0]) // 3,
-            start[1] + random.randint(-50, 50) + (end[1] - start[1]) // 3,
-        )
-        ctrl2 = (
-            start[0] + random.randint(-50, 50) + 2 * (end[0] - start[0]) // 3,
-            start[1] + random.randint(-50, 50) + 2 * (end[1] - start[1]) // 3,
-        )
 
-        nodes = np.asfortranarray(
-            [
-                [start[0], ctrl1[0], ctrl2[0], end[0]],
-                [start[1], ctrl1[1], ctrl2[1], end[1]],
-            ],
-            dtype=float,
-        )
-        curve = bezier.Curve(nodes, degree=3)
+def _bezier_curve_points(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    num_points: int = 20,
+) -> list[tuple[int, int]]:
+    """Generate points along a Bezier curve between start and end."""
+    try:
+        import bezier
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError('Human mouse movement requires the optional "mouse" extra: pip install -e ".[mouse]".') from exc
 
-        t_values = np.linspace(0.0, 1.0, num_points)
-        points = curve.evaluate_multi(t_values)
-        return [(int(points[0, i]), int(points[1, i])) for i in range(num_points)]
+    # Add random control points for natural movement.
+    ctrl1 = (
+        start[0] + random.randint(-50, 50) + (end[0] - start[0]) // 3,
+        start[1] + random.randint(-50, 50) + (end[1] - start[1]) // 3,
+    )
+    ctrl2 = (
+        start[0] + random.randint(-50, 50) + 2 * (end[0] - start[0]) // 3,
+        start[1] + random.randint(-50, 50) + 2 * (end[1] - start[1]) // 3,
+    )
 
-    HAS_BEZIER = True
-except ImportError:
-    HAS_BEZIER = False
+    nodes = np.asfortranarray(
+        [
+            [start[0], ctrl1[0], ctrl2[0], end[0]],
+            [start[1], ctrl1[1], ctrl2[1], end[1]],
+        ],
+        dtype=float,
+    )
+    curve = bezier.Curve(nodes, degree=3)
+
+    t_values = np.linspace(0.0, 1.0, num_points)
+    points = curve.evaluate_multi(t_values)
+    return [(int(points[0, i]), int(points[1, i])) for i in range(num_points)]
 
 
 def click_target_diagnostics(

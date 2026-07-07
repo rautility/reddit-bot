@@ -5,7 +5,6 @@ to be used and tested without selenium installed.
 """
 
 from .config import BotConfig as BotConfig
-from .ghost_logger import GhostLogger as GhostLogger
 
 
 def __getattr__(name):

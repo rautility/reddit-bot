@@ -33,7 +33,7 @@ jobs:
         run: ruff format --check .
 
       - name: Run tests
-        run: pytest tests/ -q
+        run: pytest tests/ -q --cov=bot --cov=main --cov=args --cov-report=term-missing
 
       - name: Check skill sync
         run: make check-skill

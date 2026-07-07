@@ -421,7 +421,13 @@ Each browser session starts with a random Chrome user agent from a pool of reali
 python main.py -a accounts.txt -l links.txt --human-mouse
 ```
 
-Uses Bezier curves to generate natural cursor paths before clicking elements. Requires the `bezier` and `numpy` packages.
+Uses Bezier curves to generate natural cursor paths before clicking elements. Install the optional dependency group before enabling it:
+
+```bash
+pip install -e ".[mouse]"
+```
+
+Without the optional extra, human mouse mode falls back to the standard Selenium pointer click path.
 
 ### Headless Mode
 
@@ -853,9 +859,18 @@ pip install -e ".[dev]"
 # Run all tests
 pytest tests/ -v
 
+# Run tests with the CI coverage report
+pytest tests/ -q --cov=bot --cov=main --cov=args --cov-report=term-missing
+
 # Run specific test module
 pytest tests/test_config.py -v
 pytest tests/test_database.py -v
+```
+
+Current coverage baseline: 63% total statement coverage from the CI coverage command.
+
+```text
+TOTAL 5371 statements, 1993 missed, 63% covered
 ```
 
 Tests cover:
@@ -889,7 +904,6 @@ reddit-bot/
 │   ├── agentctl.py            # Agent-safe control plane CLI
 │   ├── tool_cli.py            # Human-friendly reddit-tool CLI and JSON envelope
 │   ├── skills_sync.py         # .claude -> .codex skill mirror utility
-│   ├── ghost_logger.py        # Legacy no-op logger
 │   ├── reporting.py           # Summary, durable structured logging, webhooks
 │   ├── actions/               # Plugin-based action system
 │   │   ├── base.py            # BaseAction ABC and ActionResult
