@@ -3,6 +3,7 @@
 from bot.utils.validators import (
     validate_reddit_url,
     is_post_url,
+    is_share_url,
     is_subreddit_url,
     is_user_url,
 )
@@ -29,6 +30,14 @@ class TestIsPostUrl:
     def test_invalid_post(self):
         assert is_post_url("https://www.reddit.com/r/python") is False
         assert is_post_url("https://google.com") is False
+
+
+class TestIsShareUrl:
+    def test_valid_share_url(self):
+        assert is_share_url("https://www.reddit.com/r/excel/s/Ipw1C8yg0P") is True
+
+    def test_invalid_share_url(self):
+        assert is_share_url("https://www.reddit.com/r/excel/comments/abc123/title") is False
 
 
 class TestIsSubredditUrl:

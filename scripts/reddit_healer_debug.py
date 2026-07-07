@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess
 from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-
 from bot.utils.chrome_extension_bridge import ChromeExtensionBridge
+from bot.utils.chromedriver import install_chromedriver
+from bot.config import BotConfig
+from bot.actions.search import HumanSearchAction
+from bot.reporting import setup_structured_logger
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +25,18 @@ DEFAULT_PROFILE_DIR = Path.home() / f"Library/Application Support/{DEFAULT_PROFI
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9222
 DEFAULT_DEBUG_ADDRESS = f"{DEFAULT_HOST}:{DEFAULT_PORT}"
+DEBUG_LOG_FILE = "reddit-healer-debug.log"
+
+
+def _setup_script_logger() -> logging.Logger:
+    return setup_structured_logger(
+        "reddit-bot.debug",
+        level=logging.INFO,
+        log_dir=REPO_ROOT / "logs",
+        log_file=DEBUG_LOG_FILE,
+        console=False,
+        file_level=logging.INFO,
+    )
 
 
 def _profile_dir(args: argparse.Namespace) -> Path:
@@ -114,7 +129,7 @@ def open_profile(args: argparse.Namespace) -> None:
 def attached_driver(args: argparse.Namespace):
     options = webdriver.ChromeOptions()
     options.add_experimental_option("debuggerAddress", _debug_address(args))
-    service = Service(ChromeDriverManager().install())
+    service = Service(install_chromedriver())
     return webdriver.Chrome(service=service, options=options)
 
 
@@ -144,6 +159,47 @@ def find_control(args: argparse.Namespace) -> None:
         driver.quit()
 
 
+def human_search(args: argparse.Namespace) -> None:
+    driver = attached_driver(args)
+    try:
+        config = BotConfig(
+            verbose=args.verbose,
+            human_mouse=True,
+            chrome_extension_healer_enabled=True,
+            chrome_extension_bridge_timeout_ms=args.timeout_ms,
+            chrome_extension_min_confidence=args.min_confidence,
+            log_dir=str(REPO_ROOT / "logs"),
+        )
+        action = HumanSearchAction(driver, config, logging.getLogger("reddit-bot.debug"))
+        result = action.execute(query=args.query, subreddit=args.subreddit)
+        payload = {
+            "success": result.success,
+            "action": result.action,
+            "link": result.link,
+            "message": result.message,
+            "currentUrl": driver.current_url,
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    finally:
+        driver.quit()
+
+
+def find_search_result(args: argparse.Namespace) -> None:
+    driver = attached_driver(args)
+    try:
+        if args.url:
+            driver.get(args.url)
+        bridge = ChromeExtensionBridge(driver, timeout_ms=args.timeout_ms)
+        result = bridge.find_search_result(
+            args.query,
+            min_confidence=args.min_confidence,
+            max_results=args.max_results,
+        )
+        print(json.dumps(result.raw, indent=2, sort_keys=True))
+    finally:
+        driver.quit()
+
+
 def print_bot_command(args: argparse.Namespace) -> None:
     links_path = Path(args.links).resolve()
     debug_address = _debug_address(args)
@@ -153,9 +209,9 @@ def print_bot_command(args: argparse.Namespace) -> None:
                 ".venv/bin/python",
                 "main.py",
                 "-a",
-                args.accounts,
+                _quote(args.accounts),
                 "-l",
-                str(links_path),
+                _quote(str(links_path)),
                 "--verbose",
                 "--use-existing-chrome",
                 "--chrome-debugging-address",
@@ -189,9 +245,9 @@ def profile_info(args: argparse.Namespace) -> None:
             ".venv/bin/python",
             "main.py",
             "-a",
-            args.accounts,
+            _quote(args.accounts),
             "-l",
-            args.links,
+            _quote(args.links),
             "--verbose",
             "--use-existing-chrome",
             "--chrome-debugging-address",
@@ -238,6 +294,24 @@ def main() -> None:
     find_parser.add_argument("--min-confidence", type=float, default=0.72)
     find_parser.set_defaults(func=find_control)
 
+    search_find_parser = subparsers.add_parser("find-search-result")
+    add_debug_profile_args(search_find_parser)
+    search_find_parser.add_argument("--query", required=True)
+    search_find_parser.add_argument("--url", default="")
+    search_find_parser.add_argument("--min-confidence", type=float, default=0.62)
+    search_find_parser.add_argument("--max-results", type=int, default=30)
+    search_find_parser.add_argument("--timeout-ms", type=int, default=5000)
+    search_find_parser.set_defaults(func=find_search_result)
+
+    human_search_parser = subparsers.add_parser("human-search")
+    add_debug_profile_args(human_search_parser)
+    human_search_parser.add_argument("--query", required=True)
+    human_search_parser.add_argument("--subreddit", default="")
+    human_search_parser.add_argument("--min-confidence", type=float, default=0.62)
+    human_search_parser.add_argument("--timeout-ms", type=int, default=5000)
+    human_search_parser.add_argument("--verbose", action="store_true")
+    human_search_parser.set_defaults(func=human_search)
+
     command_parser = subparsers.add_parser("print-bot-command")
     add_debug_profile_args(command_parser)
     command_parser.add_argument("--accounts", default="accounts.txt")
@@ -252,7 +326,13 @@ def main() -> None:
     info_parser.set_defaults(func=profile_info)
 
     args = parser.parse_args()
-    args.func(args)
+    logger = _setup_script_logger()
+    logger.info(f"Running reddit_healer_debug command: {args.command}")
+    try:
+        args.func(args)
+    except Exception:
+        logger.exception(f"reddit_healer_debug command failed: {args.command}")
+        raise
 
 
 if __name__ == "__main__":

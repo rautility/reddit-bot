@@ -17,12 +17,51 @@ def _vote_action(mocker):
 
 def test_vote_action_returns_failure_when_button_missing(mocker):
     action, _ = _vote_action(mocker)
+    mocker.patch(
+        "bot.actions.vote.click_visible_vote_control",
+        return_value={"ok": False, "clicked": False, "confirmed": False},
+    )
 
     result = action.execute("https://www.reddit.com/r/test/comments/abc", upvote=True)
 
     assert result.success is False
     assert result.action == "upvote"
     assert "Could not find upvote button" in result.message
+
+
+def test_vote_action_skips_deleted_post_before_clicking(mocker):
+    action, driver = _vote_action(mocker)
+    action._click = mocker.Mock()
+    driver.execute_script.return_value = {
+        "available": False,
+        "reason": "Post is deleted; voting was not attempted.",
+    }
+    fallback = mocker.patch("bot.actions.vote.click_visible_vote_control")
+
+    result = action.execute("https://www.reddit.com/r/test/comments/abc/deleted/", upvote=True)
+
+    assert result.success is False
+    assert result.action == "upvote"
+    assert result.message == "Post is deleted; voting was not attempted."
+    action._find_self_healing.assert_not_called()
+    action._click.assert_not_called()
+    fallback.assert_not_called()
+
+
+def test_vote_action_uses_visible_vote_fallback_when_button_missing(mocker):
+    action, driver = _vote_action(mocker)
+    link = "https://www.reddit.com/r/test/comments/abc"
+    fallback = mocker.patch(
+        "bot.actions.vote.click_visible_vote_control",
+        return_value={"ok": True, "clicked": True, "confirmed": True},
+    )
+
+    result = action.execute(link, upvote=False)
+
+    assert result.success is True
+    assert result.action == "downvote"
+    assert result.message == "Vote registered via visible fallback"
+    fallback.assert_called_once_with(driver, intent="downvote", url=link)
 
 
 def test_vote_action_uses_self_healing_locator(mocker):
@@ -49,12 +88,103 @@ def test_vote_action_fails_when_click_does_not_register(mocker):
     action._find_self_healing.return_value = button
     action._click = mocker.Mock()
     driver.execute_script.return_value = False
+    mocker.patch(
+        "bot.actions.vote.click_visible_vote_control",
+        return_value={"ok": False, "clicked": False, "confirmed": False},
+    )
 
     result = action.execute("https://www.reddit.com/r/test/comments/abc", upvote=False)
 
     assert result.success is False
     assert result.action == "downvote"
     assert "did not register" in result.message
+
+
+def test_vote_action_uses_visible_vote_fallback_after_click_does_not_register(mocker):
+    action, driver = _vote_action(mocker)
+    link = "https://www.reddit.com/r/test/comments/abc"
+    button = mocker.Mock()
+    button.get_attribute.return_value = "false"
+    action._find_self_healing.return_value = button
+    action._click = mocker.Mock()
+    driver.execute_script.return_value = False
+    fallback = mocker.patch(
+        "bot.actions.vote.click_visible_vote_control",
+        return_value={"ok": True, "clicked": True, "confirmed": True},
+    )
+
+    result = action.execute(link, upvote=True)
+
+    assert result.success is True
+    assert result.action == "upvote"
+    assert result.message == "Vote registered via visible fallback"
+    fallback.assert_called_once_with(driver, intent="upvote", url=link)
+
+
+def test_vote_action_uses_visible_vote_fallback_when_click_raises(mocker):
+    from selenium.common.exceptions import WebDriverException
+
+    action, driver = _vote_action(mocker)
+    link = "https://www.reddit.com/r/test/comments/abc"
+    button = mocker.Mock()
+    action._find_self_healing.return_value = button
+    action._click = mocker.Mock(side_effect=WebDriverException("not clickable"))
+    fallback = mocker.patch(
+        "bot.actions.vote.click_visible_vote_control",
+        return_value={"ok": True, "clicked": True, "confirmed": True},
+    )
+
+    result = action.execute(link, upvote=True)
+
+    assert result.success is True
+    assert result.action == "upvote"
+    assert result.message == "Vote registered via visible fallback"
+    fallback.assert_called_once_with(driver, intent="upvote", url=link)
+
+
+def test_vote_action_failure_includes_visible_vote_fallback_diagnostics(mocker):
+    action, driver = _vote_action(mocker)
+    link = "https://www.reddit.com/r/test/comments/abc"
+    button = mocker.Mock()
+    button.get_attribute.return_value = "false"
+    action._find_self_healing.return_value = button
+    action._click = mocker.Mock()
+    driver.execute_script.return_value = False
+    fallback = mocker.patch(
+        "bot.actions.vote.click_visible_vote_control",
+        return_value={
+            "ok": True,
+            "clicked": True,
+            "confirmed": False,
+            "source": "vote-pill-geometry",
+            "click": {"x": 410, "y": 88},
+            "error": "confirmation stayed inactive",
+        },
+    )
+
+    result = action.execute(link, upvote=False)
+
+    assert result.success is False
+    assert result.action == "downvote"
+    assert "visibleFallback clicked=True confirmed=False" in result.message
+    assert "source=vote-pill-geometry" in result.message
+    assert "fallbackClick=(410,88)" in result.message
+    assert "error=confirmation stayed inactive" in result.message
+    fallback.assert_called_once_with(driver, intent="downvote", url=link)
+
+
+def test_vote_registration_script_does_not_accept_generic_active_text(mocker):
+    action, driver = _vote_action(mocker)
+    button = mocker.Mock()
+    button.get_attribute.return_value = "false"
+    driver.execute_script.return_value = False
+
+    assert action._vote_is_registered(button, "upvote") is False
+
+    script = driver.execute_script.call_args.args[0]
+    assert "text.includes('active')" not in script
+    assert "text.includes('selected')" not in script
+    assert "interactive" not in script
 
 
 def test_vote_action_failure_includes_click_diagnostics(mocker):
@@ -73,6 +203,10 @@ def test_vote_action_failure_includes_click_diagnostics(mocker):
         }
     )
     driver.execute_script.return_value = False
+    mocker.patch(
+        "bot.actions.vote.click_visible_vote_control",
+        return_value={"ok": False, "clicked": False, "confirmed": False},
+    )
 
     result = action.execute("https://www.reddit.com/r/test/comments/abc", upvote=True)
 

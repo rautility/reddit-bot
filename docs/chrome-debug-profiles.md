@@ -10,6 +10,19 @@ This project should use manually authenticated Chrome profiles for local Reddit 
 | Profile path | `/Users/raulvecchione/Library/Application Support/Chrome Reddit Bot Debug Profile` |
 | DevTools address | `127.0.0.1:9222` |
 | Healer extension | `chrome_extension/reddit_healer` |
+| Reddit user | `u/Particular-Arm2102` |
+
+Persist the local association in the shared agent control database:
+
+```bash
+.venv/bin/python scripts/agentctl.py profiles associate \
+  --profile-name "Chrome Reddit Bot Debug Profile" \
+  --reddit-user "u/Particular-Arm2102"
+```
+
+After this, agents can schedule or queue work with either
+`--profile-name "Chrome Reddit Bot Debug Profile"` or
+`--reddit-user "u/Particular-Arm2102"`.
 
 ## Open A Saved Profile
 
@@ -67,6 +80,14 @@ If the bridge times out, open `chrome://extensions` in that profile, enable Deve
 /Users/raulvecchione/MEGA/rvScripts/reddit-bot/chrome_extension/reddit_healer
 ```
 
+`reddit_healer_debug.py` now caches webdriver-manager artifacts inside the repo
+at `.webdriver/` by default so sandboxed runs do not depend on write access to
+`~/.wdm`.
+
+If `open-profile` fails from an agent run even though Chrome is installed,
+retry it with the approved unsandboxed GUI-open flow. Launching macOS apps is
+commonly blocked inside the sandbox.
+
 ## Find Before Clicking
 
 Use the Healer candidate probe before a real UI action:
@@ -89,6 +110,19 @@ Click only when the user explicitly asks for the action. For vote actions, confi
 
 ## Run The Bot Against A Saved Profile
 
+For agents and scheduled live actions, use the queue by default:
+
+```bash
+.venv/bin/python scripts/agentctl.py queue submit \
+  --reddit-user "u/Particular-Arm2102" \
+  --links links.txt
+
+.venv/bin/python scripts/agentctl.py queue worker --once
+```
+
+Direct `main.py` attach mode is an owner-controlled manual escape hatch, not the
+default for agents or scheduled live work:
+
 ```bash
 .venv/bin/python main.py -a accounts.txt -l links.txt --verbose \
   --use-existing-chrome \
@@ -109,4 +143,3 @@ Run one saved profile/port at a time. The bot forces attach mode to sequential e
 ```
 
 This prints JSON containing the resolved profile path, DevTools address, opener command, bot command, and login rule.
-

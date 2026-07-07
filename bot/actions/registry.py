@@ -12,6 +12,7 @@ from .post import PostTextAction, PostLinkAction, PostImageAction, CrosspostActi
 from .dm import DirectMessageAction
 from .follow import FollowAction, UnfollowAction
 from .profile import UpdateBioAction
+from .search import HumanSearchAction, SearchUpvoteAction
 from .base import BaseAction, ActionResult
 
 if TYPE_CHECKING:
@@ -38,6 +39,8 @@ class ActionRegistry:
         "follow": FollowAction,
         "unfollow": UnfollowAction,
         "update_bio": UpdateBioAction,
+        "human_search": HumanSearchAction,
+        "search_upvote": SearchUpvoteAction,
     }
 
     def __init__(self, driver: "WebDriver", config: "BotConfig", logger: Any = None):

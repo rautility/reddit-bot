@@ -154,5 +154,15 @@ def cmdline_args() -> dict:
         dest="webhook_url",
         help="Webhook URL for completion/failure notifications (Discord, Slack, or generic).",
     )
+    parser.add_argument(
+        "--log-dir",
+        dest="log_dir",
+        help="Directory for durable bot logs (default: logs).",
+    )
+    parser.add_argument(
+        "--log-file",
+        dest="log_file",
+        help="File name for durable bot logs (default: reddit-bot.log).",
+    )
 
     return vars(parser.parse_args())

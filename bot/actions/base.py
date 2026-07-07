@@ -19,6 +19,10 @@ class ActionResult:
     link: str
     message: str = ""
     screenshot_path: Optional[str] = None
+    # Optional machine-readable diagnostics (JSON-serializable dict). Flows into
+    # the queue job's result_json via dataclasses.asdict, so external callers can
+    # read structured detail instead of parsing the message string.
+    details: Optional[dict[str, Any]] = None
 
     def __str__(self) -> str:
         status = "OK" if self.success else "FAIL"

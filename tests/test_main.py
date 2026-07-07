@@ -29,6 +29,28 @@ def test_execute_run_dry_run_skips_account_execution(mocker):
     account_delay.assert_not_called()
 
 
+def test_execute_run_existing_chrome_does_not_mutate_parallel_accounts(mocker):
+    run_account_mock = mocker.patch("main.run_account")
+    run_account_mock.return_value = ExecutionSummary()
+    mocker.patch("main.Timeouts.custom")
+    logger = logging.getLogger("test-reddit-bot")
+    config = BotConfig(
+        use_existing_chrome=True,
+        chrome_debugging_address="127.0.0.1:9222",
+        parallel_accounts=3,
+    )
+
+    _execute_run(
+        config,
+        [Account(username="user1", password="pass1")],
+        [ActionEntry(link="https://reddit.com/r/test", action="join")],
+        logger,
+    )
+
+    assert config.parallel_accounts == 3
+    run_account_mock.assert_called_once()
+
+
 def test_run_account_returns_failed_summary_on_browser_startup_error(mocker):
     mocker.patch(
         "main.RedditBot",

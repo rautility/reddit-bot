@@ -90,6 +90,92 @@ class ChromeControlResult:
         )
 
 
+@dataclass
+class ChromeSearchResultCandidate:
+    """A Reddit search result candidate returned by the Chrome extension."""
+
+    id: str = ""
+    selector: str = ""
+    url: str = ""
+    title: str = ""
+    subreddit: str = ""
+    author: str = ""
+    confidence: float = 0.0
+    text: str = ""
+    attributes: dict[str, Any] = field(default_factory=dict)
+    bounding_box: dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)
+    evidence: list[str] = field(default_factory=list)
+    actionable: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ChromeSearchResultCandidate":
+        return cls(
+            id=str(data.get("id") or ""),
+            selector=str(data.get("selector") or ""),
+            url=str(data.get("url") or ""),
+            title=str(data.get("title") or ""),
+            subreddit=str(data.get("subreddit") or ""),
+            author=str(data.get("author") or ""),
+            confidence=float(data.get("confidence") or 0.0),
+            text=str(data.get("text") or ""),
+            attributes=data.get("attributes") if isinstance(data.get("attributes"), dict) else {},
+            bounding_box=data.get("boundingBox") if isinstance(data.get("boundingBox"), dict) else {},
+            state=data.get("state") if isinstance(data.get("state"), dict) else {},
+            evidence=data.get("evidence") if isinstance(data.get("evidence"), list) else [],
+            actionable=bool(data.get("actionable", True)),
+        )
+
+
+@dataclass
+class ChromeSearchResult:
+    """Structured result from a bridge search-result lookup."""
+
+    ok: bool
+    query: str = ""
+    url: str = ""
+    error: str = ""
+    best_candidate: Optional[ChromeSearchResultCandidate] = None
+    candidates: list[ChromeSearchResultCandidate] = field(default_factory=list)
+    rejected: list[ChromeSearchResultCandidate] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    meets_min_confidence: bool = False
+    page_shape: dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ChromeSearchResult":
+        candidates = [
+            ChromeSearchResultCandidate.from_dict(candidate)
+            for candidate in data.get("candidates", [])
+            if isinstance(candidate, dict)
+        ]
+        best = data.get("bestCandidate")
+        best_candidate = (
+            ChromeSearchResultCandidate.from_dict(best)
+            if isinstance(best, dict)
+            else candidates[0] if candidates else None
+        )
+        rejected = [
+            ChromeSearchResultCandidate.from_dict(candidate)
+            for candidate in data.get("rejected", [])
+            if isinstance(candidate, dict)
+        ]
+        return cls(
+            ok=bool(data.get("ok")),
+            query=str(data.get("query") or ""),
+            url=str(data.get("url") or ""),
+            error=str(data.get("error") or ""),
+            best_candidate=best_candidate,
+            candidates=candidates,
+            rejected=rejected,
+            events=data.get("events") if isinstance(data.get("events"), list) else [],
+            meets_min_confidence=bool(data.get("meetsMinConfidence")),
+            page_shape=data.get("pageShape") if isinstance(data.get("pageShape"), dict) else {},
+            raw=data,
+        )
+
+
 class ChromeExtensionBridge:
     """Send structured requests to the content-script bridge."""
 
@@ -138,6 +224,23 @@ class ChromeExtensionBridge:
             },
         )
 
+    def find_search_result(
+        self,
+        query: str,
+        *,
+        min_confidence: float = 0.62,
+        max_results: int = 30,
+    ) -> ChromeSearchResult:
+        response = self.request(
+            "find_search_result",
+            {
+                "query": query,
+                "minConfidence": min_confidence,
+                "maxResults": max_results,
+            },
+        )
+        return ChromeSearchResult.from_dict(response)
+
     def element_for_candidate(self, candidate: ChromeControlCandidate, *, post_url: str = ""):
         if not candidate.selector:
             return None
@@ -147,6 +250,19 @@ class ChromeExtensionBridge:
                 candidate.selector,
                 candidate.bounding_box,
                 post_url,
+            )
+        except WebDriverException:
+            return None
+
+    def element_for_search_result(self, candidate: ChromeSearchResultCandidate):
+        if not candidate.selector:
+            return None
+        try:
+            return self.driver.execute_script(
+                self._deep_query_script(),
+                candidate.selector,
+                candidate.bounding_box,
+                candidate.url,
             )
         except WebDriverException:
             return None

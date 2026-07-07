@@ -18,6 +18,8 @@ class TestBotConfigDefaults:
         assert config.parallel_accounts == 1
         assert config.proxy.enabled is False
         assert config.rate_limit.daily_action_quota == 0
+        assert config.log_dir == "logs"
+        assert config.log_file == "reddit-bot.log"
         assert config.selector_cache_path == ".selector-healing/reddit_selectors.json"
         assert config.selector_fallback_wait == 1.0
         assert config.selenium_implicit_wait == 20
@@ -31,12 +33,16 @@ class TestBotConfigDefaults:
             "verbose": True,
             "headless": True,
             "parallel_accounts": 4,
+            "log_dir": "var/log/reddit-bot",
+            "log_file": "weekly.log",
             "proxy": {"enabled": True, "proxy_list_path": "proxies.txt"},
         }
         config = BotConfig.from_dict(data)
         assert config.verbose is True
         assert config.headless is True
         assert config.parallel_accounts == 4
+        assert config.log_dir == "var/log/reddit-bot"
+        assert config.log_file == "weekly.log"
         assert config.proxy.enabled is True
         assert config.proxy.proxy_list_path == "proxies.txt"
 
@@ -65,11 +71,15 @@ class TestBotConfigMerge:
             "verbose": True,
             "headless": True,
             "proxy_list": "proxy.txt",
+            "log_dir": "tmp-logs",
+            "log_file": "bot.jsonl",
         }
         config.merge_cli_args(args)
         assert config.accounts_path == "test_accounts.txt"
         assert config.verbose is True
         assert config.headless is True
+        assert config.log_dir == "tmp-logs"
+        assert config.log_file == "bot.jsonl"
         assert config.proxy.enabled is True
         assert config.proxy.proxy_list_path == "proxy.txt"
 
@@ -82,6 +92,8 @@ class TestBotConfigMerge:
     def test_merge_env_vars(self, monkeypatch):
         monkeypatch.setenv("REDDIT_BOT_HEADLESS", "true")
         monkeypatch.setenv("REDDIT_BOT_DRY_RUN", "1")
+        monkeypatch.setenv("REDDIT_BOT_LOG_DIR", "env-logs")
+        monkeypatch.setenv("REDDIT_BOT_LOG_FILE", "env-bot.log")
         monkeypatch.setenv("REDDIT_BOT_SELECTOR_FALLBACK_WAIT", "0.5")
         monkeypatch.setenv("REDDIT_BOT_SELENIUM_IMPLICIT_WAIT", "10")
         monkeypatch.setenv("REDDIT_BOT_CHROME_EXTENSION_HEALER_ENABLED", "true")
@@ -91,6 +103,8 @@ class TestBotConfigMerge:
         config.merge_env_vars()
         assert config.headless is True
         assert config.dry_run is True
+        assert config.log_dir == "env-logs"
+        assert config.log_file == "env-bot.log"
         assert config.selector_fallback_wait == 0.5
         assert config.selenium_implicit_wait == 10
         assert config.chrome_extension_healer_enabled is True

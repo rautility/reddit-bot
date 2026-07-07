@@ -22,14 +22,13 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, SessionNotCreatedException
-from webdriver_manager.chrome import ChromeDriverManager
 
 from .config import BotConfig
-from .ghost_logger import GhostLogger
 from .database import BotDatabase
-from .reporting import ExecutionSummary
+from .reporting import ExecutionSummary, setup_structured_logger
 from .actions.base import ActionResult
 from .actions.registry import ActionRegistry
+from .utils.chromedriver import install_chromedriver
 from .utils.timeouts import Timeouts
 from .utils.retry import retry_action
 from .utils.user_agents import get_random_user_agent
@@ -58,18 +57,14 @@ class RedditBot:
         self._current_account: Optional[str] = None
 
         # Logger setup
-        if self.config.verbose:
-            self.logger = logging.getLogger("reddit-bot")
-            self.logger.setLevel(logging.INFO)
-            if not self.logger.handlers:
-                handler = logging.StreamHandler()
-                formatter = logging.Formatter(
-                    "\033[93m[INFO]\033[0m %(asctime)s \033[95m%(message)s\033[0m"
-                )
-                handler.setFormatter(formatter)
-                self.logger.addHandler(handler)
-        else:
-            self.logger = GhostLogger()
+        self.logger = setup_structured_logger(
+            "reddit-bot",
+            level=logging.INFO if self.config.verbose else logging.WARNING,
+            log_dir=self.config.log_dir,
+            log_file=self.config.log_file,
+            console=self.config.verbose,
+            file_level=logging.INFO,
+        )
 
         # Database
         self.db = BotDatabase(self.config.db_path)
@@ -180,7 +175,7 @@ class RedditBot:
                     self.logger.info(f"Using existing Chrome user data dir {chrome_user_data_dir}")
 
         try:
-            service = Service(ChromeDriverManager().install())
+            service = Service(install_chromedriver())
         except Exception as exc:
             fallback_path = os.environ.get("REDDIT_BOT_CHROMEDRIVER", "/usr/local/bin/chromedriver")
             if not fallback_path or not Path(fallback_path).exists():
@@ -248,7 +243,10 @@ class RedditBot:
             "--chrome-debugging-address. macOS example: "
             "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome "
             f"--remote-debugging-port={port} "
-            "--user-data-dir=/tmp/reddit-bot-chrome-debug"
+            "--user-data-dir=/tmp/reddit-bot-chrome-debug. "
+            "If Chrome is already running and the error is 'Operation not permitted', "
+            "the caller is probably sandboxed from local DevTools; rerun the worker "
+            "with local loopback/DevTools access."
         )
 
     @classmethod
@@ -540,11 +538,17 @@ class RedditBot:
                 self.summary.add(result)
                 return result
 
-        # Quota check
+        # Quota check. Reserve before executing so parallel agents cannot all
+        # pass the daily quota check before any one of them writes the log.
+        reservation_id = None
         if self.config.rate_limit.daily_action_quota > 0 and self.db and self._current_account:
-            count = self.db.get_daily_action_count(self._current_account)
-            if count >= self.config.rate_limit.daily_action_quota:
-                msg = f"Daily quota ({self.config.rate_limit.daily_action_quota}) reached for {self._current_account}"
+            reserved, msg, reservation_id = self.db.reserve_account_action(
+                self._current_account,
+                action_name,
+                link,
+                daily_quota=self.config.rate_limit.daily_action_quota,
+            )
+            if not reserved:
                 self.logger.warning(msg)
                 result = ActionResult(success=False, action=action_name, link=link, message=msg)
                 self.summary.add(result)
@@ -568,6 +572,11 @@ class RedditBot:
                 success=result.success,
                 error_message=result.message if not result.success else None,
                 screenshot_path=screenshot_path,
+            )
+            self.db.finish_account_action_reservation(
+                reservation_id,
+                success=result.success,
+                message=result.message,
             )
 
         self.summary.add(result)

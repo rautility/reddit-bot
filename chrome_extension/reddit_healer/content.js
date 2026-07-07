@@ -8,7 +8,7 @@
   const REQUEST_CHANNEL = 'reddit-bot-healer:request';
   const RESPONSE_CHANNEL = 'reddit-bot-healer:response';
   const PAGE_EVENT_CHANNEL = 'reddit-bot-healer:page-event';
-  const HEALER_VERSION = '0.2.1';
+  const HEALER_VERSION = '0.3.0';
   const EVENT_LIMIT = 500;
   const shadowRoots = new WeakSet();
   const events = [];
@@ -35,6 +35,7 @@
     'aria-disabled',
     'data-testid',
     'data-state',
+    'data-promoted',
     'data-action-bar-action',
     'data-click-id',
     'data-adclicklocation',
@@ -968,6 +969,251 @@
     return bestResult || scanControl(payload, 0);
   }
 
+  function postUrlFromElement(element) {
+    const values = [
+      element && element.getAttribute && element.getAttribute('permalink'),
+      element && element.getAttribute && element.getAttribute('content-href'),
+      element && element.getAttribute && element.getAttribute('href')
+    ].filter(Boolean);
+    for (const anchor of element && element.querySelectorAll ? element.querySelectorAll('a[href*="/comments/"]') : []) {
+      values.push(anchor.href || anchor.getAttribute('href'));
+    }
+    for (const value of values) {
+      try {
+        const url = new URL(value, window.location.href);
+        if (url.pathname.includes('/comments/')) {
+          return url.href;
+        }
+      } catch (_error) {
+        // Ignore malformed candidate hrefs.
+      }
+    }
+    return '';
+  }
+
+  function pageShape() {
+    let shadowHostCount = 0;
+    for (const element of document.querySelectorAll('*')) {
+      if (element.shadowRoot) {
+        shadowHostCount += 1;
+      }
+    }
+    const shredditPosts = document.querySelectorAll('shreddit-post').length;
+    const searchTrackers = document.querySelectorAll('search-telemetry-tracker').length;
+    const bodyText = normalizeText(document.body && document.body.textContent).slice(0, 2000);
+    return {
+      shredditPosts,
+      articles: document.querySelectorAll('article').length,
+      postContainers: document.querySelectorAll('[data-testid="post-container"]').length,
+      commentLinks: document.querySelectorAll('a[href*="/comments/"]').length,
+      searchTrackers,
+      shadowHostCount,
+      appShells: document.querySelectorAll('shreddit-app, faceplate-batch, faceplate-tracker').length,
+      wrapperMode: searchTrackers > 0 && shredditPosts === 0 ? 'search-telemetry-tracker' : 'standard',
+      recaptchaResources: document.querySelectorAll('iframe[src*="recaptcha"], script[src*="recaptcha"]').length,
+      challengeText: /\b(captcha|blocked|unusual traffic|try again later)\b/.test(bodyText)
+    };
+  }
+
+  function nearestSearchCard(element) {
+    let current = element;
+    let depth = 0;
+    while (current && current !== document.documentElement && depth < 8) {
+      if (
+        current.matches &&
+        current.matches('shreddit-post, article, [data-testid="post-container"], search-telemetry-tracker, faceplate-tracker')
+      ) {
+        return current;
+      }
+      current = current.parentElement || (current.getRootNode && current.getRootNode().host) || null;
+      depth += 1;
+    }
+    return element;
+  }
+
+  function searchResultState(card, anchor) {
+    const joined = normalizeText([
+      compactTextContent(card),
+      attributeText(card),
+      attributeText(anchor),
+      descendantHintText(card)
+    ].filter(Boolean).join(' '));
+    const promoted = /\b(promoted|sponsored|advertisement|advertise|ad)\b/.test(joined) ||
+      card.hasAttribute && (
+        card.hasAttribute('promoted') ||
+        card.hasAttribute('data-promoted') ||
+        card.getAttribute('data-adclicklocation')
+      );
+    const archived = /\b(archived|this post is archived)\b/.test(joined) ||
+      card.querySelector && Boolean(card.querySelector('[aria-label*="archived" i], [title*="archived" i]'));
+    const deleted = /\b(deleted by user|\[deleted\]|deleted post)\b/.test(joined);
+    const removed = /\b(removed by moderators|removed post|\[removed\])\b/.test(joined);
+    return {
+      promoted: Boolean(promoted),
+      archived: Boolean(archived),
+      deleted: Boolean(deleted),
+      removed: Boolean(removed),
+      hidden: !visible(card) || !visible(anchor)
+    };
+  }
+
+  function titleForSearchResult(card, anchor) {
+    const titleSelectors = [
+      '[slot="title"]',
+      '[data-testid="post-title"]',
+      'h1',
+      'h2',
+      'h3',
+      'a[href*="/comments/"]'
+    ];
+    for (const selector of titleSelectors) {
+      const element = card.querySelector && card.querySelector(selector);
+      const title = compactTextContent(element);
+      if (title) {
+        return title.slice(0, 180);
+      }
+    }
+    return compactTextContent(anchor).slice(0, 180);
+  }
+
+  function subredditForSearchResult(card) {
+    const text = compactTextContent(card);
+    const match = text.match(/r\/[A-Za-z0-9_]+/);
+    return match ? match[0] : '';
+  }
+
+  function authorForSearchResult(card) {
+    const text = compactTextContent(card);
+    const match = text.match(/u\/[A-Za-z0-9_-]+/);
+    return match ? match[0] : '';
+  }
+
+  function searchResultId(url, rect) {
+    return candidateId(url, '', rect);
+  }
+
+  function scoreSearchResult(card, anchor, query) {
+    if (!visible(card) || !visible(anchor)) {
+      return null;
+    }
+    const url = postUrlFromElement(card) || postUrlFromElement(anchor);
+    if (!url) {
+      return null;
+    }
+    const state = searchResultState(card, anchor);
+    const evidence = [];
+    let score = 72;
+    const title = titleForSearchResult(card, anchor);
+    const queryTerms = normalizeText(query).split(' ').filter(term => term.length > 2);
+    const haystack = normalizeText(`${title} ${compactTextContent(card)}`);
+    const matchedTerms = queryTerms.filter(term => haystack.includes(term));
+    if (matchedTerms.length) {
+      score += Math.min(18, matchedTerms.length * 6);
+      evidence.push(`matched query terms: ${matchedTerms.join(', ')}`);
+    }
+    if (card.matches && card.matches('shreddit-post')) {
+      score += 12;
+      evidence.push('shreddit-post card');
+    } else if (card.matches && card.matches('article')) {
+      score += 8;
+      evidence.push('article card');
+    }
+    if (anchor.matches && anchor.matches('a[href*="/comments/"]')) {
+      score += 10;
+      evidence.push('comments permalink');
+    }
+    if (state.promoted) {
+      score -= 80;
+      evidence.push('rejected promoted result');
+    }
+    if (state.archived) {
+      score -= 80;
+      evidence.push('rejected archived result');
+    }
+    if (state.deleted) {
+      score -= 80;
+      evidence.push('rejected deleted result');
+    }
+    if (state.removed) {
+      score -= 80;
+      evidence.push('rejected removed result');
+    }
+    if (state.hidden) {
+      score -= 60;
+      evidence.push('hidden result');
+    }
+    const actionable = !state.promoted && !state.archived && !state.deleted && !state.removed && !state.hidden;
+    const rect = boundingBoxFor(anchor);
+    return {
+      id: searchResultId(url, rect),
+      selector: selectorFor(anchor),
+      url,
+      title,
+      subreddit: subredditForSearchResult(card),
+      author: authorForSearchResult(card),
+      confidence: Math.max(0, Math.min(1, score / 120)),
+      actionable,
+      text: compactTextContent(card).slice(0, 240),
+      attributes: attributesFor(anchor),
+      boundingBox: rect,
+      state,
+      evidence,
+      _score: score,
+      _element: anchor
+    };
+  }
+
+  function findSearchResult(payload) {
+    const query = String(payload.query || '');
+    const minConfidence = Number(payload.minConfidence || 0);
+    const maxResults = Math.max(5, Math.min(80, Number(payload.maxResults || 30)));
+    const seenUrls = new Set();
+    const candidates = [];
+    const rejected = [];
+    const anchors = Array.from(document.querySelectorAll('a[href*="/comments/"]')).slice(0, maxResults * 3);
+    for (const anchor of anchors) {
+      const card = nearestSearchCard(anchor);
+      const candidate = scoreSearchResult(card, anchor, query);
+      if (!candidate || seenUrls.has(candidate.url)) {
+        continue;
+      }
+      seenUrls.add(candidate.url);
+      if (candidate.actionable && candidate.confidence >= 0.2) {
+        candidates.push(candidate);
+      } else {
+        rejected.push(candidate);
+      }
+      if (candidates.length >= maxResults) {
+        break;
+      }
+    }
+    candidates.sort((left, right) => right.confidence - left.confidence);
+    rejected.sort((left, right) => right.confidence - left.confidence);
+    const publicCandidates = candidates.slice(0, maxResults).map(publicCandidate);
+    const publicRejected = rejected.slice(0, 20).map(publicCandidate);
+    const bestCandidate = publicCandidates[0] || null;
+    const meetsMinConfidence = candidateMeetsActionableThreshold(bestCandidate, minConfidence);
+    addEvent(bestCandidate ? 'found_search_result' : 'search_result_scan_empty', {
+      query,
+      candidateId: bestCandidate && bestCandidate.id,
+      confidence: bestCandidate && bestCandidate.confidence,
+      meetsMinConfidence,
+      pageShape: pageShape()
+    });
+    return {
+      ok: true,
+      query,
+      url: window.location.href,
+      minConfidence,
+      meetsMinConfidence,
+      bestCandidate,
+      candidates: publicCandidates,
+      rejected: publicRejected,
+      pageShape: pageShape(),
+      events: recentEvents(payload.since)
+    };
+  }
+
   function deepQuery(selector, scope) {
     const roots = [];
     collectRoots(scope || document, roots);
@@ -1028,6 +1274,9 @@
     }
     if (message.command === 'find_control') {
       return findControl(payload);
+    }
+    if (message.command === 'find_search_result') {
+      return findSearchResult(payload);
     }
     if (message.command === 'confirm_control_state') {
       return confirmControlState(payload);
@@ -1113,6 +1362,7 @@
         'aria-label',
         'aria-disabled',
         'data-state',
+        'data-promoted',
         'data-action-bar-action',
         'data-click-id',
         'data-adclicklocation',

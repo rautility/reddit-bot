@@ -17,6 +17,9 @@ REDDIT_SUBREDDIT_PATTERN = re.compile(
 REDDIT_USER_PATTERN = re.compile(
     r"https?://(www\.|old\.|new\.)?reddit\.com/u(ser)?/\w+"
 )
+REDDIT_SHARE_PATTERN = re.compile(
+    r"https?://(www\.|old\.|new\.)?reddit\.com/r/\w+/s/\w+/?"
+)
 
 
 def validate_reddit_url(url: str) -> bool:
@@ -31,6 +34,11 @@ def validate_reddit_url(url: str) -> bool:
 def is_post_url(url: str) -> bool:
     """Check if URL points to a Reddit post."""
     return bool(REDDIT_POST_PATTERN.match(url))
+
+
+def is_share_url(url: str) -> bool:
+    """Check if URL is a Reddit share shortlink that must be resolved first."""
+    return bool(REDDIT_SHARE_PATTERN.match(url))
 
 
 def is_subreddit_url(url: str) -> bool:
