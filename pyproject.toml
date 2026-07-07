@@ -7,7 +7,7 @@ name = "reddit-bot"
 version = "2.0.0"
 description = "A feature-rich Reddit automation bot using Selenium"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.9"
 dependencies = [
     "selenium>=4.10.0",
@@ -29,6 +29,12 @@ dev = [
 reddit-bot = "main:main"
 reddit-agentctl = "bot.agentctl:main"
 reddit-tool = "bot.tool_cli:main"
+
+[tool.setuptools]
+py-modules = ["main", "args"]
+
+[tool.setuptools.packages.find]
+include = ["bot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

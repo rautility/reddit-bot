@@ -91,7 +91,7 @@
 ### Developer Experience
 - **Unit tests** — comprehensive test suite for config, parsing, validation, database, proxy, and reporting
 - **Docker support** — `Dockerfile` with Chrome pre-installed for portable execution
-- **CI pipeline** — GitHub Actions workflow for automated testing on Python 3.9-3.12
+- **CI pipeline** — GitHub Actions workflow for automated testing on supported Python versions
 - **Plugin architecture** — actions are modular classes; add new actions without modifying core bot logic
 - **Installable package** — `pyproject.toml` for `pip install .` support
 
@@ -104,13 +104,20 @@
 ```bash
 git clone https://github.com/markmelnic/Reddit-Bot
 cd Reddit-Bot
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Development Installation
 
 ```bash
 pip install -e ".[dev]"
+```
+
+### Preferred Local Workflow With uv
+
+```bash
+uv sync --extra dev
+uv run pytest -q
 ```
 
 ### Docker Installation
@@ -861,7 +868,6 @@ reddit-bot/
 ├── args.py                    # CLI argument parser
 ├── config.example.yaml        # Example configuration file
 ├── pyproject.toml             # Package configuration
-├── requirements.txt           # Dependencies
 ├── Dockerfile                 # Docker support
 ├── bot/
 │   ├── __init__.py

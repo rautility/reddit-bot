@@ -14,10 +14,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
+RUN pip install --no-cache-dir -e ".[dev]"
 
 # Default: run with headless mode
 ENTRYPOINT ["python", "main.py", "--headless"]
