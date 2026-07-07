@@ -46,45 +46,70 @@ class HumanSearchAction(BaseAction):
                 message="Dry run",
             )
 
+        max_candidates = max(1, int(getattr(self.config, "search_upvote_max_candidates", 5)))
         try:
-            self._open_search(search_query, subreddit=subreddit)
-            self._skim_results()
-            candidate, source = self._find_search_candidate(search_query)
-            if not candidate:
-                return ActionResult(
-                    success=False,
-                    action=self.name,
-                    link=search_query,
-                    message="No eligible non-promoted, non-archived Reddit post found",
-                )
-            element = candidate.get("element")
-            if element is None:
-                return ActionResult(
-                    success=False,
-                    action=self.name,
-                    link=candidate.get("url", search_query),
-                    message="Eligible search result could not be reselected",
-                )
-            self._click(element)
-            Timeouts.med()
-            selected_url = self.driver.current_url or candidate.get("url", "")
-            return ActionResult(
-                success=True,
-                action=self.name,
-                link=selected_url,
-                message=(
-                    f"Opened {source} search result: "
-                    f"{candidate.get('title') or candidate.get('url')}"
-                ),
+            candidates = self.collect_candidates(
+                search_query,
+                subreddit=subreddit,
+                limit=max_candidates,
             )
         except WebDriverException as exc:
-            detail = str(exc).splitlines()[0]
             return ActionResult(
                 success=False,
                 action=self.name,
                 link=search_query,
-                message=f"Search failed: {detail}",
+                message=f"Search failed: {str(exc).splitlines()[0]}",
             )
+
+        if not candidates:
+            return ActionResult(
+                success=False,
+                action=self.name,
+                link=search_query,
+                message="No eligible non-promoted, non-archived Reddit post found",
+            )
+
+        # Open the top recency-ranked result; fall through if one cannot be opened.
+        total = len(candidates)
+        for index, candidate in enumerate(candidates, start=1):
+            opened_url = self._open_ranked_candidate(candidate)
+            if opened_url:
+                source = candidate.get("source") or "search"
+                return ActionResult(
+                    success=True,
+                    action=self.name,
+                    link=opened_url,
+                    message=(
+                        f"Opened {source} search result {index}/{total}: "
+                        f"{candidate.get('title') or opened_url}"
+                    ),
+                )
+            if index < total:
+                Timeouts.med()
+
+        return ActionResult(
+            success=False,
+            action=self.name,
+            link=(candidates[0].get("url") or search_query),
+            message="No eligible search result could be opened",
+        )
+
+    def _open_ranked_candidate(self, candidate: dict[str, Any]) -> str | None:
+        """Open a candidate post — click its on-page link if present (human-like),
+        else navigate directly. Returns the resulting URL, or None on failure."""
+        url = (candidate.get("url") or "").strip()
+        if not url:
+            return None
+        try:
+            element = self._element_for_url(url)
+            if element is not None:
+                self._click(element)
+            else:
+                self._navigate(url)
+            Timeouts.med()
+            return self.driver.current_url or url
+        except WebDriverException:
+            return None
 
     def _open_search(self, query: str, *, subreddit: str = "") -> None:
         if self._looks_like_url(query):
@@ -434,15 +459,6 @@ class HumanSearchAction(BaseAction):
         )
         Timeouts.custom(0.3, 0.9)
 
-    def _find_search_candidate(self, query: str) -> tuple[dict[str, Any] | None, str]:
-        candidate = self._find_extension_search_candidate(query)
-        if candidate:
-            return candidate, "extension"
-        candidate = self._find_dom_search_candidate()
-        if candidate:
-            return candidate, "dom"
-        return None, ""
-
     def collect_candidates(
         self,
         query: str,
@@ -654,89 +670,6 @@ class HumanSearchAction(BaseAction):
             if len(collected) >= limit:
                 break
         return collected
-
-    def _find_extension_search_candidate(self, query: str) -> dict[str, Any] | None:
-        if not getattr(self.config, "chrome_extension_healer_enabled", False):
-            return None
-
-        from bot.utils.chrome_extension_bridge import ChromeExtensionBridge
-
-        bridge = ChromeExtensionBridge(
-            self.driver,
-            timeout_ms=getattr(self.config, "chrome_extension_bridge_timeout_ms", 1500),
-        )
-        result = bridge.find_search_result(query)
-        candidate = result.best_candidate
-        min_confidence = 0.62
-        if not result.ok or candidate is None or candidate.confidence < min_confidence:
-            if result.error:
-                self.logger.info(f"Chrome extension search healer unavailable: {result.error}")
-            return None
-        if (
-            candidate.state.get("promoted") or
-            candidate.state.get("archived") or
-            candidate.state.get("deleted") or
-            candidate.state.get("removed")
-        ):
-            return None
-
-        element = bridge.element_for_search_result(candidate)
-        if element is None:
-            return None
-        return {
-            "element": element,
-            "url": candidate.url,
-            "title": candidate.title,
-            "confidence": candidate.confidence,
-            "evidence": candidate.evidence,
-        }
-
-    def _find_dom_search_candidate(self) -> dict[str, Any] | None:
-        payload = self.driver.execute_script(
-            """
-            function visible(element) {
-              if (!element || !element.getBoundingClientRect) return false;
-              const style = window.getComputedStyle(element);
-              const rect = element.getBoundingClientRect();
-              return style.display !== 'none' && style.visibility !== 'hidden' &&
-                rect.width > 0 && rect.height > 0;
-            }
-            function text(element) {
-              return String((element && element.textContent) || '').replace(/\\s+/g, ' ').trim();
-            }
-            function attrs(element) {
-              if (!element || !element.getAttribute) return '';
-              return ['aria-label', 'data-testid', 'data-adclicklocation', 'data-promoted', 'class']
-                .map(attr => element.getAttribute(attr)).filter(Boolean).join(' ');
-            }
-            function rejected(card) {
-              const joined = `${text(card)} ${attrs(card)}`.toLowerCase();
-              return /\\b(promoted|sponsored|advertise|advertisement|ad)\\b/.test(joined) ||
-                /\\b(archived|this post is archived)\\b/.test(joined) ||
-                /\\b(deleted by user|\\[deleted\\]|removed by moderators|removed post|\\[removed\\])\\b/.test(joined);
-            }
-            const anchors = Array.from(document.querySelectorAll('a[href*="/comments/"]'));
-            for (const anchor of anchors) {
-              if (!visible(anchor)) continue;
-              const card = anchor.closest('shreddit-post, article, [data-testid="post-container"], search-telemetry-tracker') || anchor;
-              if (!visible(card) || rejected(card)) continue;
-              const href = new URL(anchor.getAttribute('href'), window.location.href).href;
-              const selector = anchor.id ? `a#${CSS.escape(anchor.id)}` : '';
-              return {url: href, title: text(anchor) || text(card), selector};
-            }
-            return null;
-            """
-        )
-        if not isinstance(payload, dict) or not payload.get("url"):
-            return None
-        element = self._element_for_url(payload["url"], payload.get("selector") or "")
-        if element is None:
-            return None
-        return {
-            "element": element,
-            "url": payload["url"],
-            "title": payload.get("title") or payload["url"],
-        }
 
     def _element_for_url(self, url: str, selector: str = ""):
         try:

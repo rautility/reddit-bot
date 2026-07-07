@@ -70,6 +70,91 @@ def test_send_search_keys_updates_overlay_with_js(mocker):
     assert driver.execute_script.call_args.args[2] == "x"
 
 
+def test_human_search_opens_top_ranked_candidate(mocker):
+    driver = mocker.Mock()
+    config = BotConfig()
+    action = HumanSearchAction(driver, config)
+    top = "https://www.reddit.com/r/x/comments/a/one/"
+    mocker.patch.object(action, "collect_candidates", return_value=[
+        {"url": top, "title": "one", "source": "extension"},
+        {"url": "https://www.reddit.com/r/x/comments/b/two/", "title": "two", "source": "extension"},
+    ])
+    open_mock = mocker.patch.object(action, "_open_ranked_candidate", return_value=top)
+
+    result = action.execute(query="excel forms", subreddit="excel")
+
+    assert result.success is True
+    assert result.link == top
+    assert "1/2" in result.message
+    action.collect_candidates.assert_called_once_with(
+        "excel forms", subreddit="excel", limit=config.search_upvote_max_candidates
+    )
+    assert open_mock.call_count == 1
+
+
+def test_human_search_falls_through_when_open_fails(mocker):
+    driver = mocker.Mock()
+    action = HumanSearchAction(driver, BotConfig())
+    c1 = {"url": "https://www.reddit.com/r/x/comments/a/one/", "title": "one", "source": "extension"}
+    c2 = {"url": "https://www.reddit.com/r/x/comments/b/two/", "title": "two", "source": "extension"}
+    mocker.patch.object(action, "collect_candidates", return_value=[c1, c2])
+    mocker.patch("bot.actions.search.Timeouts.med")
+    mocker.patch.object(action, "_open_ranked_candidate", side_effect=[None, c2["url"]])
+
+    result = action.execute(query="excel")
+
+    assert result.success is True
+    assert result.link == c2["url"]
+    assert "2/2" in result.message
+    assert action._open_ranked_candidate.call_count == 2
+
+
+def test_human_search_returns_failure_when_no_candidates(mocker):
+    driver = mocker.Mock()
+    action = HumanSearchAction(driver, BotConfig())
+    mocker.patch.object(action, "collect_candidates", return_value=[])
+
+    result = action.execute(query="excel")
+
+    assert result.success is False
+    assert "No eligible" in result.message
+
+
+def test_open_ranked_candidate_clicks_element_when_present(mocker):
+    driver = mocker.Mock()
+    url = "https://www.reddit.com/r/x/comments/a/one/"
+    driver.current_url = url
+    action = HumanSearchAction(driver, BotConfig())
+    element = mocker.Mock()
+    mocker.patch.object(action, "_element_for_url", return_value=element)
+    click = mocker.patch.object(action, "_click")
+    navigate = mocker.patch.object(action, "_navigate")
+    mocker.patch("bot.actions.search.Timeouts.med")
+
+    result = action._open_ranked_candidate({"url": url})
+
+    click.assert_called_once_with(element)
+    navigate.assert_not_called()
+    assert result == url
+
+
+def test_open_ranked_candidate_navigates_when_no_element(mocker):
+    driver = mocker.Mock()
+    url = "https://www.reddit.com/r/x/comments/a/one/"
+    driver.current_url = url
+    action = HumanSearchAction(driver, BotConfig())
+    mocker.patch.object(action, "_element_for_url", return_value=None)
+    click = mocker.patch.object(action, "_click")
+    navigate = mocker.patch.object(action, "_navigate")
+    mocker.patch("bot.actions.search.Timeouts.med")
+
+    result = action._open_ranked_candidate({"url": url})
+
+    navigate.assert_called_once_with(url)
+    click.assert_not_called()
+    assert result == url
+
+
 def test_search_upvote_collects_then_votes_first_candidate(mocker):
     driver = mocker.Mock()
     config = BotConfig()
