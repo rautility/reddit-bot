@@ -5,12 +5,13 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
+from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import NoSuchElementException
 
-from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
+
+from .base import ActionResult, BaseAction
 
 
 class CommentAction(BaseAction):
@@ -23,7 +24,12 @@ class CommentAction(BaseAction):
         self.logger.info(f"Commenting on {link}")
 
         if self.config.dry_run:
-            return ActionResult(success=True, action="comment", link=link, message=f"Dry run: would comment '{text[:50]}...'")
+            return ActionResult(
+                success=True,
+                action="comment",
+                link=link,
+                message=f"Dry run: would comment '{text[:50]}...'",
+            )
 
         self._navigate(link)
         Timeouts.med()
@@ -35,16 +41,28 @@ class CommentAction(BaseAction):
 
         textbox = self._find_with_fallbacks(
             (By.CSS_SELECTOR, "div[contenteditable='true'][role='textbox']"),
-            (By.XPATH, "/html/body/div[1]/div/div[2]/div[3]/div/div/div/div[2]/div[1]/div[2]/div[3]/div[2]/div/div/div[2]/div/div[1]/div/div/div"),
-            (By.XPATH, '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[3]/div[1]/div[2]/div[3]/div[2]/div/div/div[2]/div/div[1]/div/div/div'),
+            (
+                By.XPATH,
+                "/html/body/div[1]/div/div[2]/div[3]/div/div/div/div[2]/div[1]/div[2]/div[3]/div[2]/div/div/div[2]/div/div[1]/div/div/div",
+            ),
+            (
+                By.XPATH,
+                '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[3]/div[1]/div[2]/div[3]/div[2]/div/div/div[2]/div/div[1]/div/div/div',
+            ),
         )
         self._click(textbox)
         self._type_like_human(textbox, text)
 
         submit_btn = self._find_with_fallbacks(
             (By.CSS_SELECTOR, "button[type='submit'][slot='submit-button']"),
-            (By.XPATH, "/html/body/div[1]/div/div[2]/div[3]/div/div/div/div[2]/div[1]/div[2]/div[3]/div[2]/div/div/div[3]/div[1]/button"),
-            (By.XPATH, '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[3]/div[1]/div[2]/div[3]/div[2]/div/div/div[3]/div[1]/button'),
+            (
+                By.XPATH,
+                "/html/body/div[1]/div/div[2]/div[3]/div/div/div/div[2]/div[1]/div[2]/div[3]/div[2]/div/div/div[3]/div[1]/button",
+            ),
+            (
+                By.XPATH,
+                '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[3]/div[1]/div[2]/div[3]/div[2]/div/div/div[3]/div[1]/button',
+            ),
         )
         self._click(submit_btn)
         Timeouts.med()
@@ -53,8 +71,6 @@ class CommentAction(BaseAction):
 
     def _handle_nsfw(self) -> None:
         with contextlib.suppress(NoSuchElementException):
-            btn = self.driver.find_element(
-                By.CSS_SELECTOR, "button.nsfw-gate-btn, button[name='over18']"
-            )
+            btn = self.driver.find_element(By.CSS_SELECTOR, "button.nsfw-gate-btn, button[name='over18']")
             btn.click()
             Timeouts.srt()

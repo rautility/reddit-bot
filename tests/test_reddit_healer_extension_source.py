@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -38,4 +37,4 @@ def test_content_scanner_supports_human_search_results():
     assert "deleted" in source
     assert "removed" in source
     assert "!state.deleted && !state.removed" in source
-    assert "a[href*=\"/comments/\"]" in source
+    assert 'a[href*="/comments/"]' in source

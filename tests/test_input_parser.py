@@ -2,7 +2,7 @@
 
 import json
 
-from bot.utils.input_parser import parse_links_file, ActionEntry
+from bot.utils.input_parser import parse_links_file
 
 
 class TestParsePipeDelimited:
@@ -32,7 +32,11 @@ class TestParseJson:
         f = tmp_path / "links.json"
         data = [
             {"link": "https://reddit.com/r/test", "action": "join"},
-            {"link": "https://reddit.com/r/test/comments/abc", "action": "comment", "comment": "Hi"},
+            {
+                "link": "https://reddit.com/r/test/comments/abc",
+                "action": "comment",
+                "comment": "Hi",
+            },
         ]
         f.write_text(json.dumps(data))
         entries = parse_links_file(str(f))

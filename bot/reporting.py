@@ -4,29 +4,29 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
 
 import requests
 
 from bot.actions.base import ActionResult  # noqa: F401 — re-exported
+from bot.utils.clock import utc_now, utc_now_iso
 
 
 @dataclass
 class ExecutionSummary:
     """Tracks and summarizes all actions across an execution run."""
 
-    start_time: datetime = field(default_factory=datetime.utcnow)
-    end_time: Optional[datetime] = None
+    start_time: datetime = field(default_factory=utc_now)
+    end_time: datetime | None = None
     results: list[ActionResult] = field(default_factory=list)
 
     def add(self, result: ActionResult) -> None:
         self.results.append(result)
 
     def finalize(self) -> None:
-        self.end_time = datetime.utcnow()
+        self.end_time = utc_now()
 
     @property
     def total(self) -> int:
@@ -43,7 +43,7 @@ class ExecutionSummary:
     @property
     def duration_seconds(self) -> float:
         if self.end_time is None:
-            return (datetime.utcnow() - self.start_time).total_seconds()
+            return (utc_now() - self.start_time).total_seconds()
         return (self.end_time - self.start_time).total_seconds()
 
     def print_table(self) -> str:
@@ -53,8 +53,7 @@ class ExecutionSummary:
         lines.append("=" * 80)
         lines.append("EXECUTION SUMMARY")
         lines.append("=" * 80)
-        lines.append(f"Duration: {self.duration_seconds:.1f}s | Total: {self.total} | "
-                      f"Success: {self.succeeded} | Failed: {self.failed}")
+        lines.append(f"Duration: {self.duration_seconds:.1f}s | Total: {self.total} | Success: {self.succeeded} | Failed: {self.failed}")
         lines.append("-" * 80)
         lines.append(f"{'Status':<8} {'Action':<15} {'Link':<35} {'Message'}")
         lines.append("-" * 80)
@@ -76,10 +75,7 @@ class ExecutionSummary:
             "total": self.total,
             "succeeded": self.succeeded,
             "failed": self.failed,
-            "results": [
-                {"action": r.action, "link": r.link, "success": r.success, "message": r.message}
-                for r in self.results
-            ],
+            "results": [{"action": r.action, "link": r.link, "success": r.success, "message": r.message} for r in self.results],
         }
 
 
@@ -120,9 +116,7 @@ def setup_structured_logger(
         if json_output:
             handler.setFormatter(JsonFormatter())
         else:
-            formatter = logging.Formatter(
-                "\033[93m[%(levelname)s]\033[0m %(asctime)s \033[95m%(message)s\033[0m"
-            )
+            formatter = logging.Formatter("\033[93m[%(levelname)s]\033[0m %(asctime)s \033[95m%(message)s\033[0m")
             handler.setFormatter(formatter)
         handler.setLevel(level)
         _mark_managed_handler(handler, "console")
@@ -141,7 +135,7 @@ def setup_structured_logger(
 def _mark_managed_handler(
     handler: logging.Handler,
     kind: str,
-    path: Optional[Path] = None,
+    path: Path | None = None,
 ) -> None:
     setattr(handler, MANAGED_HANDLER_ATTR, True)
     setattr(handler, MANAGED_HANDLER_KIND_ATTR, kind)
@@ -152,7 +146,7 @@ def _mark_managed_handler(
 def _has_managed_handler(
     logger: logging.Logger,
     kind: str,
-    path: Optional[Path] = None,
+    path: Path | None = None,
 ) -> bool:
     expected_path = str(path) if path else None
     for handler in logger.handlers:
@@ -167,7 +161,7 @@ def _has_managed_handler(
 def _drop_stale_managed_handlers(
     logger: logging.Logger,
     *,
-    log_path: Optional[Path],
+    log_path: Path | None,
     console: bool,
 ) -> None:
     expected_path = str(log_path) if log_path else None
@@ -177,10 +171,7 @@ def _drop_stale_managed_handlers(
 
         kind = getattr(handler, MANAGED_HANDLER_KIND_ATTR, None)
         handler_path = getattr(handler, MANAGED_HANDLER_PATH_ATTR, None)
-        should_remove = (
-            (kind == "console" and not console)
-            or (kind == "file" and handler_path != expected_path)
-        )
+        should_remove = (kind == "console" and not console) or (kind == "file" and handler_path != expected_path)
         if not should_remove:
             continue
 
@@ -193,7 +184,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utc_now_iso(),
             "level": record.levelname,
             "message": record.getMessage(),
             "logger": record.name,
@@ -248,16 +239,18 @@ def _build_payload(url: str, summary: ExecutionSummary) -> dict:
     # Discord format
     if "discord" in url:
         return {
-            "embeds": [{
-                "title": "Reddit Bot Execution Report",
-                "description": text,
-                "color": 0x00FF00 if summary.failed == 0 else 0xFF0000,
-                "fields": [
-                    {"name": "Total Actions", "value": str(summary.total), "inline": True},
-                    {"name": "Succeeded", "value": str(summary.succeeded), "inline": True},
-                    {"name": "Failed", "value": str(summary.failed), "inline": True},
-                ],
-            }]
+            "embeds": [
+                {
+                    "title": "Reddit Bot Execution Report",
+                    "description": text,
+                    "color": 0x00FF00 if summary.failed == 0 else 0xFF0000,
+                    "fields": [
+                        {"name": "Total Actions", "value": str(summary.total), "inline": True},
+                        {"name": "Succeeded", "value": str(summary.succeeded), "inline": True},
+                        {"name": "Failed", "value": str(summary.failed), "inline": True},
+                    ],
+                }
+            ]
         }
 
     # Slack format

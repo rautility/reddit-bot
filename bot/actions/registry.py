@@ -4,19 +4,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .vote import VoteAction
+from .base import ActionResult, BaseAction
 from .comment import CommentAction
 from .community import JoinCommunityAction
-from .save_hide import SaveAction, HideAction
-from .post import PostTextAction, PostLinkAction, PostImageAction, CrosspostAction
 from .dm import DirectMessageAction
 from .follow import FollowAction, UnfollowAction
+from .post import CrosspostAction, PostImageAction, PostLinkAction, PostTextAction
 from .profile import UpdateBioAction
+from .save_hide import HideAction, SaveAction
 from .search import HumanSearchAction, SearchUpvoteAction
-from .base import BaseAction, ActionResult
+from .vote import VoteAction
 
 if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
+
     from bot.config import BotConfig
 
 
@@ -43,7 +44,7 @@ class ActionRegistry:
         "search_upvote": SearchUpvoteAction,
     }
 
-    def __init__(self, driver: "WebDriver", config: "BotConfig", logger: Any = None):
+    def __init__(self, driver: WebDriver, config: BotConfig, logger: Any = None):
         self.driver = driver
         self.config = config
         self.logger = logger

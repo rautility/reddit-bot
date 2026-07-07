@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, date, timedelta
-from typing import Any, Optional
+from datetime import date, datetime, timedelta
+from typing import Any
+
+from bot.utils.clock import utc_now, utc_now_iso
 
 
 class BotDatabase:
@@ -151,14 +153,14 @@ class BotDatabase:
 
     @staticmethod
     def _now() -> datetime:
-        return datetime.utcnow()
+        return utc_now()
 
     @classmethod
     def _now_iso(cls) -> str:
-        return cls._now().isoformat()
+        return utc_now_iso()
 
     @staticmethod
-    def _row_to_dict(row: sqlite3.Row | None) -> Optional[dict[str, Any]]:
+    def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
             return None
         return dict(row)
@@ -175,11 +177,11 @@ class BotDatabase:
         action: str,
         link: str,
         success: bool = True,
-        error_message: Optional[str] = None,
-        screenshot_path: Optional[str] = None,
+        error_message: str | None = None,
+        screenshot_path: str | None = None,
     ) -> None:
         """Log an action to the database."""
-        now = datetime.utcnow().isoformat()
+        now = utc_now_iso()
         self.conn.execute(
             """INSERT INTO action_log
                (timestamp, account, action, link, success, error_message, screenshot_path)
@@ -240,8 +242,8 @@ class BotDatabase:
         *,
         link: str = "",
         priority: int = 100,
-        dedupe_key: Optional[str] = None,
-        scheduled_for: Optional[str] = None,
+        dedupe_key: str | None = None,
+        scheduled_for: str | None = None,
         max_attempts: int = 3,
     ) -> dict[str, Any]:
         """Queue an action and return the queued or pre-existing active job."""
@@ -283,14 +285,14 @@ class BotDatabase:
             )
             return self._row_to_dict(cursor.fetchone()) or {}
 
-    def get_queue_job(self, job_id: int) -> Optional[dict[str, Any]]:
+    def get_queue_job(self, job_id: int) -> dict[str, Any] | None:
         cursor = self.conn.execute("SELECT * FROM agent_queue WHERE id = ?", (job_id,))
         return self._row_to_dict(cursor.fetchone())
 
     def list_queue_jobs(
         self,
         *,
-        status: Optional[str] = None,
+        status: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         query = "SELECT * FROM agent_queue"
@@ -304,15 +306,13 @@ class BotDatabase:
         return [dict(row) for row in cursor.fetchall()]
 
     def get_queue_counts(self) -> dict[str, int]:
-        cursor = self.conn.execute(
-            "SELECT status, COUNT(*) AS count FROM agent_queue GROUP BY status"
-        )
+        cursor = self.conn.execute("SELECT status, COUNT(*) AS count FROM agent_queue GROUP BY status")
         return {row["status"]: row["count"] for row in cursor.fetchall()}
 
     def recover_stale_queue_jobs(
         self,
         *,
-        now_iso: Optional[str] = None,
+        now_iso: str | None = None,
     ) -> list[dict[str, Any]]:
         """Release running queue jobs whose lease expired."""
         now_iso = now_iso or self._now_iso()
@@ -372,7 +372,7 @@ class BotDatabase:
         worker_id: str,
         *,
         lease_seconds: int = 600,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Atomically lease the next due queue job for a worker."""
         now = self._now()
         now_iso = now.isoformat()
@@ -433,8 +433,8 @@ class BotDatabase:
         job_id: int,
         *,
         success: bool,
-        result: Optional[dict[str, Any]] = None,
-        error: Optional[str] = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
     ) -> None:
         """Mark a queue job complete."""
         now = self._now_iso()
@@ -498,12 +498,10 @@ class BotDatabase:
         self.conn.commit()
 
     def list_account_limits(self) -> list[dict[str, Any]]:
-        cursor = self.conn.execute(
-            "SELECT * FROM account_limits ORDER BY account, action"
-        )
+        cursor = self.conn.execute("SELECT * FROM account_limits ORDER BY account, action")
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_account_limit(self, account: str, action: str = "*") -> Optional[int]:
+    def get_account_limit(self, account: str, action: str = "*") -> int | None:
         cursor = self.conn.execute(
             """SELECT daily_action_quota FROM account_limits
                WHERE account = ? AND action IN (?, '*')
@@ -520,10 +518,10 @@ class BotDatabase:
         action: str,
         link: str,
         *,
-        daily_quota: Optional[int] = None,
-        job_id: Optional[int] = None,
+        daily_quota: int | None = None,
+        job_id: int | None = None,
         ttl_seconds: int = 3600,
-    ) -> tuple[bool, str, Optional[int]]:
+    ) -> tuple[bool, str, int | None]:
         """Atomically reserve one daily action slot for an account."""
         if daily_quota is None:
             daily_quota = self.get_account_limit(account, action)
@@ -598,7 +596,7 @@ class BotDatabase:
 
     def finish_account_action_reservation(
         self,
-        reservation_id: Optional[int],
+        reservation_id: int | None,
         *,
         success: bool,
         message: str = "",
@@ -620,7 +618,7 @@ class BotDatabase:
     def list_account_reservations(
         self,
         *,
-        account: Optional[str] = None,
+        account: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         query = "SELECT * FROM account_action_reservations"
@@ -642,7 +640,7 @@ class BotDatabase:
         owner: str,
         *,
         ttl_seconds: int = 600,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         now = self._now()
         now_iso = now.isoformat()
@@ -692,7 +690,7 @@ class BotDatabase:
         self,
         resource_type: str,
         resource_id: str,
-        owner: Optional[str] = None,
+        owner: str | None = None,
     ) -> bool:
         params: list[Any] = [resource_type, resource_id]
         query = "DELETE FROM agent_leases WHERE resource_type = ? AND resource_id = ?"
@@ -721,13 +719,13 @@ class BotDatabase:
         name: str,
         *,
         source: str,
-        rrule: Optional[str] = None,
+        rrule: str | None = None,
         status: str = "ACTIVE",
-        account: Optional[str] = None,
-        profile: Optional[str] = None,
-        action_class: Optional[str] = None,
-        metadata: Optional[dict[str, Any]] = None,
-        next_run_at: Optional[str] = None,
+        account: str | None = None,
+        profile: str | None = None,
+        action_class: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        next_run_at: str | None = None,
     ) -> None:
         now = self._now_iso()
         self.conn.execute(
@@ -763,19 +761,17 @@ class BotDatabase:
         self.conn.commit()
 
     def list_registered_schedules(self) -> list[dict[str, Any]]:
-        cursor = self.conn.execute(
-            "SELECT * FROM schedule_registry ORDER BY source, name"
-        )
+        cursor = self.conn.execute("SELECT * FROM schedule_registry ORDER BY source, name")
         return [dict(row) for row in cursor.fetchall()]
 
     def lease_due_schedules(
         self,
         worker_id: str,
         *,
-        now_iso: Optional[str] = None,
+        now_iso: str | None = None,
         lease_seconds: int = 600,
         limit: int = 1,
-        schedule_id: Optional[str] = None,
+        schedule_id: str | None = None,
     ) -> list[dict[str, Any]]:
         now = datetime.fromisoformat(now_iso) if now_iso else self._now()
         now_iso = now.isoformat()
@@ -819,9 +815,9 @@ class BotDatabase:
         self,
         schedule_id: str,
         *,
-        next_run_at: Optional[str],
-        last_run_at: Optional[str],
-        error: Optional[str] = None,
+        next_run_at: str | None,
+        last_run_at: str | None,
+        error: str | None = None,
         deactivate: bool = False,
     ) -> None:
         now = self._now_iso()
@@ -854,10 +850,10 @@ class BotDatabase:
         profile_name: str,
         reddit_username: str,
         *,
-        profile_path: Optional[str] = None,
-        debug_address: Optional[str] = None,
-        account_label: Optional[str] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        profile_path: str | None = None,
+        debug_address: str | None = None,
+        account_label: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Persist the Reddit account that belongs to a saved Chrome profile."""
         normalized_username = self.normalize_reddit_username(reddit_username)
@@ -891,10 +887,10 @@ class BotDatabase:
     def get_chrome_profile_association(
         self,
         *,
-        profile_name: Optional[str] = None,
-        reddit_username: Optional[str] = None,
-        account_label: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+        profile_name: str | None = None,
+        reddit_username: str | None = None,
+        account_label: str | None = None,
+    ) -> dict[str, Any] | None:
         clauses = []
         params: list[Any] = []
         if profile_name:
@@ -911,7 +907,7 @@ class BotDatabase:
 
         cursor = self.conn.execute(
             f"""SELECT * FROM chrome_profile_accounts
-                WHERE {' OR '.join(clauses)}
+                WHERE {" OR ".join(clauses)}
                 ORDER BY profile_name
                 LIMIT 1""",
             params,
@@ -919,9 +915,7 @@ class BotDatabase:
         return self._row_to_dict(cursor.fetchone())
 
     def list_chrome_profile_associations(self) -> list[dict[str, Any]]:
-        cursor = self.conn.execute(
-            "SELECT * FROM chrome_profile_accounts ORDER BY profile_name"
-        )
+        cursor = self.conn.execute("SELECT * FROM chrome_profile_accounts ORDER BY profile_name")
         return [dict(row) for row in cursor.fetchall()]
 
     def close(self) -> None:

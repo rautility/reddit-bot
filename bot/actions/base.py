@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
+
     from bot.config import BotConfig
 
 
@@ -18,11 +19,11 @@ class ActionResult:
     action: str
     link: str
     message: str = ""
-    screenshot_path: Optional[str] = None
+    screenshot_path: str | None = None
     # Optional machine-readable diagnostics (JSON-serializable dict). Flows into
     # the queue job's result_json via dataclasses.asdict, so external callers can
     # read structured detail instead of parsing the message string.
-    details: Optional[dict[str, Any]] = None
+    details: dict[str, Any] | None = None
 
     def __str__(self) -> str:
         status = "OK" if self.success else "FAIL"
@@ -34,7 +35,7 @@ class BaseAction(ABC):
 
     name: str = "base"
 
-    def __init__(self, driver: "WebDriver", config: "BotConfig", logger: Optional[logging.Logger] = None):
+    def __init__(self, driver: WebDriver, config: BotConfig, logger: logging.Logger | None = None):
         self.driver = driver
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class BaseAction(ABC):
     def _navigate(self, url: str) -> None:
         """Navigate to a URL."""
         from selenium.common.exceptions import WebDriverException
+
         from bot.utils.timeouts import Timeouts
 
         attempts = 2
@@ -58,9 +60,7 @@ class BaseAction(ABC):
             except WebDriverException as exc:
                 last_error = exc
                 if attempt == 0:
-                    self.logger.warning(
-                        f"Primary navigation failed (attempt {attempt + 1}/{attempts}); retrying with JS navigation."
-                    )
+                    self.logger.warning(f"Primary navigation failed (attempt {attempt + 1}/{attempts}); retrying with JS navigation.")
                     self.driver.execute_script("window.location.href = arguments[0];", url)
                     Timeouts.med()
                 else:
@@ -99,11 +99,13 @@ class BaseAction(ABC):
     def _click(self, element) -> dict:
         """Click an element, using browser pointer actions, and return diagnostics."""
         from bot.utils.mouse import human_click
+
         return human_click(self.driver, element, enabled=self.config.human_mouse)
 
     def _type_like_human(self, element, text: str) -> None:
         """Type text character by character with random delays."""
         from bot.utils.timeouts import Timeouts
+
         for ch in text:
             element.send_keys(ch)
             Timeouts.srt()

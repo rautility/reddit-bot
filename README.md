@@ -4,7 +4,7 @@
 
 ### A feature-rich Reddit automation bot using Selenium
 
-![Python Versions](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)
+![Python Versions](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
 </div>

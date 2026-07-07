@@ -23,8 +23,7 @@ POST_URL_FORMAT = "https://www.reddit.com/r/<subreddit>/comments/<post_id>/<slug
 URL_CONTRACT = {
     "postActions": sorted(["upvote", "downvote", "comment", "save", "hide", "crosspost"]),
     "canonicalFormat": POST_URL_FORMAT,
-    "rejects": "Reddit share shortlinks like /r/<subreddit>/s/<share_id>. "
-    "Resolve them to the canonical /comments/ URL before submitting.",
+    "rejects": "Reddit share shortlinks like /r/<subreddit>/s/<share_id>. Resolve them to the canonical /comments/ URL before submitting.",
 }
 
 # What each transport field means, so an agent never has to read prose to build
@@ -182,9 +181,7 @@ def validate_action_fields(action: str, provided: dict[str, Any]) -> list[dict[s
         return [
             {
                 "field": "action",
-                "error": f"Unknown action '{action}'. Valid actions: "
-                + ", ".join(action_names())
-                + ".",
+                "error": f"Unknown action '{action}'. Valid actions: " + ", ".join(action_names()) + ".",
             }
         ]
     errors: list[dict[str, str]] = []

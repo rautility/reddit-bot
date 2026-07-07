@@ -7,14 +7,14 @@ import csv
 import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
+
 
 def _get_fernet_and_kdf():
     """Lazy import of cryptography to avoid import errors when not needed."""
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
     return Fernet, hashes, PBKDF2HMAC
 
 
@@ -61,7 +61,7 @@ def decrypt_file(input_path: str, passphrase: str) -> str:
 def read_accounts(
     path: str,
     encrypted: bool = False,
-    passphrase: Optional[str] = None,
+    passphrase: str | None = None,
 ) -> list[Account]:
     """Read accounts from a file (pipe-delimited, CSV, or JSON).
 
@@ -78,7 +78,7 @@ def read_accounts(
             raise ValueError("No passphrase provided for encrypted credentials")
         content = decrypt_file(path, passphrase)
     else:
-        with open(path, "r") as f:
+        with open(path) as f:
             content = f.read()
 
     content = content.strip()

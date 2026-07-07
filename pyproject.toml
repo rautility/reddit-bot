@@ -8,7 +8,7 @@ version = "2.0.0"
 description = "A feature-rich Reddit automation bot using Selenium"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "selenium>=4.10.0",
     "webdriver-manager>=4.0.0",
@@ -23,6 +23,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-mock>=3.10",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -38,3 +39,17 @@ include = ["bot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "error::DeprecationWarning:bot\\..*",
+    "error::DeprecationWarning:main",
+    "error::DeprecationWarning:args",
+]
+
+[tool.ruff]
+line-length = 140
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+line-ending = "lf"

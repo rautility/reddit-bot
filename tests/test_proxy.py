@@ -2,7 +2,7 @@
 
 import pytest
 
-from bot.utils.proxy import Proxy, load_proxies, get_next_proxy
+from bot.utils.proxy import Proxy, get_next_proxy, load_proxies
 
 
 class TestProxy:

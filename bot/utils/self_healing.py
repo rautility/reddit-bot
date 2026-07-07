@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import time
-import contextlib
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
 
@@ -21,12 +22,8 @@ class SelfHealingLocator:
         self.driver = driver
         self.config = config
         self.logger = logger
-        self.cache_path = Path(
-            getattr(config, "selector_cache_path", ".selector-healing/reddit_selectors.json")
-        )
-        self.diagnostics_dir = Path(
-            getattr(config, "selector_diagnostics_dir", ".selector-healing/diagnostics")
-        )
+        self.cache_path = Path(getattr(config, "selector_cache_path", ".selector-healing/reddit_selectors.json"))
+        self.diagnostics_dir = Path(getattr(config, "selector_diagnostics_dir", ".selector-healing/diagnostics"))
 
     def find(
         self,
@@ -84,7 +81,11 @@ class SelfHealingLocator:
                 return response
         except WebDriverException as exc:
             return {"intent": intent, "error": str(exc).splitlines()[0], "candidates": []}
-        return {"intent": intent, "error": "Probe returned no structured response", "candidates": []}
+        return {
+            "intent": intent,
+            "error": "Probe returned no structured response",
+            "candidates": [],
+        }
 
     def _find_legacy(self, legacy_locators: Iterable[tuple[str, str]]):
         if not legacy_locators:

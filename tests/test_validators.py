@@ -1,11 +1,11 @@
 """Tests for URL validation utilities."""
 
 from bot.utils.validators import (
-    validate_reddit_url,
     is_post_url,
     is_share_url,
     is_subreddit_url,
     is_user_url,
+    validate_reddit_url,
 )
 
 

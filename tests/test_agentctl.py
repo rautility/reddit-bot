@@ -241,9 +241,7 @@ def test_profiles_probe_reports_browser_metadata(mocker, capsys):
     response.__enter__.return_value = response
     urlopen = mocker.patch("bot.agentctl.urlopen", return_value=response)
 
-    exit_code = agentctl.main(
-        ["profiles", "probe", "--debug-address", "127.0.0.1:9222"]
-    )
+    exit_code = agentctl.main(["profiles", "probe", "--debug-address", "127.0.0.1:9222"])
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)

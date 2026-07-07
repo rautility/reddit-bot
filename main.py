@@ -8,16 +8,15 @@ import random
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
 
 from tqdm import tqdm
 
 from args import cmdline_args
-from bot import RedditBot, BotConfig
+from bot import BotConfig, RedditBot
 from bot.actions.base import ActionResult
 from bot.reporting import ExecutionSummary, send_webhook, setup_structured_logger
-from bot.utils.credentials import read_accounts, read_accounts_from_env, Account
-from bot.utils.input_parser import parse_links_file, ActionEntry
+from bot.utils.credentials import Account, read_accounts, read_accounts_from_env
+from bot.utils.input_parser import ActionEntry, parse_links_file
 from bot.utils.timeouts import Timeouts
 
 
@@ -89,16 +88,11 @@ def _log_summary_failures(summary: ExecutionSummary, logger: logging.Logger) -> 
     if summary.failed == 0:
         return
 
-    logger.error(
-        f"Run completed with {summary.failed} failed action(s) out of {summary.total}."
-    )
+    logger.error(f"Run completed with {summary.failed} failed action(s) out of {summary.total}.")
     for result in summary.results:
         if result.success:
             continue
-        logger.error(
-            f"Action failed: action={result.action} link={result.link!r} "
-            f"message={result.message}"
-        )
+        logger.error(f"Action failed: action={result.action} link={result.link!r} message={result.message}")
 
 
 def _add_account_failure(
@@ -137,18 +131,12 @@ def run_account(
                     try:
                         bot.login_interactively(account.username)
                     except RuntimeError as interactive_error:
-                        message = (
-                            f"Manual login failed for {account.username}: "
-                            f"{interactive_error}"
-                        )
+                        message = f"Manual login failed for {account.username}: {interactive_error}"
                         logger.error(message)
                         _add_account_failure(bot.summary, "manual_login", message)
                         return bot.summary
                 else:
-                    message = (
-                        f"Existing Chrome session is not authenticated for "
-                        f"{account.username}"
-                    )
+                    message = f"Existing Chrome session is not authenticated for {account.username}"
                     logger.error(message)
                     _add_account_failure(bot.summary, "existing_chrome_auth", message)
                     return bot.summary
@@ -159,10 +147,7 @@ def run_account(
                     try:
                         bot.login_interactively(account.username)
                     except RuntimeError as interactive_error:
-                        message = (
-                            f"Manual login failed for {account.username}: "
-                            f"{interactive_error}"
-                        )
+                        message = f"Manual login failed for {account.username}: {interactive_error}"
                         logger.error(message)
                         _add_account_failure(bot.summary, "manual_login", message)
                         return bot.summary
@@ -206,12 +191,12 @@ def run_account(
 
 def run_scheduled(config: BotConfig, accounts: list[Account], entries: list[ActionEntry], logger) -> None:
     """Run the bot on a cron schedule."""
-    import sched
     import re
+    import sched
 
     def parse_simple_interval(cron_expr: str) -> int:
         """Parse a simple cron-like interval. Supports '*/N' in hours position."""
-        match = re.search(r'\*/(\d+)', cron_expr)
+        match = re.search(r"\*/(\d+)", cron_expr)
         if match:
             hours = int(match.group(1))
             return hours * 3600
@@ -270,9 +255,7 @@ def _execute_run(
     """Execute the full run (all accounts, all actions)."""
     parallel_accounts = config.parallel_accounts
     if config.use_existing_chrome and parallel_accounts > 1:
-        logger.warning(
-            "Existing Chrome mode is best run sequentially; forcing parallel_accounts = 1"
-        )
+        logger.warning("Existing Chrome mode is best run sequentially; forcing parallel_accounts = 1")
         parallel_accounts = 1
 
     if config.dry_run:
@@ -284,10 +267,7 @@ def _execute_run(
         # Parallel execution
         logger.info(f"Running {len(accounts)} accounts in parallel (max {parallel_accounts} workers)")
         with ThreadPoolExecutor(max_workers=parallel_accounts) as executor:
-            futures = {
-                executor.submit(run_account, acc, entries, config, logger): acc
-                for acc in accounts
-            }
+            futures = {executor.submit(run_account, acc, entries, config, logger): acc for acc in accounts}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Accounts", disable=not config.verbose):
                 account = futures[future]
                 try:
@@ -323,7 +303,7 @@ def _execute_run(
 
 
 def main() -> None:
-    logger: Optional[logging.Logger] = None
+    logger: logging.Logger | None = None
     try:
         args = cmdline_args()
         config = load_config(args)

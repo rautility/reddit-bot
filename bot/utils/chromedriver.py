@@ -8,7 +8,6 @@ from pathlib import Path
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.driver_cache import DriverCacheManager
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE_DIR = REPO_ROOT / ".webdriver"
 ENV_CACHE_DIR = "REDDIT_BOT_WDM_CACHE"

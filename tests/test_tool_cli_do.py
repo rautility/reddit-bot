@@ -14,9 +14,7 @@ def _run(argv, capsys):
 
 
 def test_capabilities_json_returns_versioned_envelope(tmp_path, capsys):
-    exit_code, out = _run(
-        ["--db-path", str(tmp_path / "agent.db"), "--json", "capabilities"], capsys
-    )
+    exit_code, out = _run(["--db-path", str(tmp_path / "agent.db"), "--json", "capabilities"], capsys)
     assert exit_code == 0
     payload = json.loads(out)
     assert payload["ok"] is True
@@ -30,9 +28,7 @@ def test_capabilities_json_returns_versioned_envelope(tmp_path, capsys):
 
 
 def test_capabilities_accepts_json_after_subcommand(tmp_path, capsys):
-    exit_code, out = _run(
-        ["--db-path", str(tmp_path / "agent.db"), "capabilities", "--json"], capsys
-    )
+    exit_code, out = _run(["--db-path", str(tmp_path / "agent.db"), "capabilities", "--json"], capsys)
 
     assert exit_code == 0
     payload = json.loads(out)
@@ -42,9 +38,7 @@ def test_capabilities_accepts_json_after_subcommand(tmp_path, capsys):
 
 def test_global_value_flags_are_accepted_after_subcommand(tmp_path, capsys):
     db_path = tmp_path / "agent.db"
-    exit_code, out = _run(
-        ["capabilities", "--json", "--db-path", str(db_path)], capsys
-    )
+    exit_code, out = _run(["capabilities", "--json", "--db-path", str(db_path)], capsys)
 
     assert exit_code == 0
     payload = json.loads(out)
@@ -54,8 +48,10 @@ def test_global_value_flags_are_accepted_after_subcommand(tmp_path, capsys):
 def test_describe_single_action_json(tmp_path, capsys):
     exit_code, out = _run(
         [
-            "--db-path", str(tmp_path / "agent.db"),
-            "describe", "search_upvote",
+            "--db-path",
+            str(tmp_path / "agent.db"),
+            "describe",
+            "search_upvote",
             "--json",
         ],
         capsys,
@@ -85,13 +81,18 @@ def test_do_no_run_writes_json_action_file_and_enqueues(tmp_path, capsys):
     actions_dir = tmp_path / "actions"
     exit_code, out = _run(
         [
-            "--db-path", str(db_path),
+            "--db-path",
+            str(db_path),
             "--json",
             "do",
-            "--action", "upvote",
-            "--link", CANONICAL_URL,
-            "--account-label", "default",
-            "--actions-dir", str(actions_dir),
+            "--action",
+            "upvote",
+            "--link",
+            CANONICAL_URL,
+            "--account-label",
+            "default",
+            "--actions-dir",
+            str(actions_dir),
             "--no-run",
         ],
         capsys,
@@ -121,12 +122,17 @@ def test_do_search_upvote_accepts_query_alias(tmp_path, capsys):
     actions_dir = tmp_path / "actions"
     exit_code, out = _run(
         [
-            "--db-path", str(db_path),
+            "--db-path",
+            str(db_path),
             "do",
-            "--action", "search_upvote",
-            "--query", "best Excel tips",
-            "--account-label", "default",
-            "--actions-dir", str(actions_dir),
+            "--action",
+            "search_upvote",
+            "--query",
+            "best Excel tips",
+            "--account-label",
+            "default",
+            "--actions-dir",
+            str(actions_dir),
             "--no-run",
             "--json",
         ],
@@ -153,11 +159,15 @@ def test_search_upvote_command_queues_compound_action(tmp_path, capsys):
     actions_dir = tmp_path / "actions"
     exit_code, out = _run(
         [
-            "--db-path", str(db_path),
+            "--db-path",
+            str(db_path),
             "search-upvote",
-            "--query", "best Excel tips",
-            "--account-label", "default",
-            "--actions-dir", str(actions_dir),
+            "--query",
+            "best Excel tips",
+            "--account-label",
+            "default",
+            "--actions-dir",
+            str(actions_dir),
             "--no-run",
             "--json",
         ],
@@ -205,12 +215,16 @@ def test_do_profile_preflight_blocks_before_queue_when_debugger_down(
 
     exit_code, out = _run(
         [
-            "--db-path", str(db_path),
+            "--db-path",
+            str(db_path),
             "--json",
             "do",
-            "--action", "upvote",
-            "--link", CANONICAL_URL,
-            "--reddit-user", "u/Particular-Arm2102",
+            "--action",
+            "upvote",
+            "--link",
+            CANONICAL_URL,
+            "--reddit-user",
+            "u/Particular-Arm2102",
             "--no-open-profile",
         ],
         capsys,
@@ -232,13 +246,18 @@ def test_do_profile_preflight_blocks_before_queue_when_debugger_down(
 def test_do_rejects_share_links_with_link_errors(tmp_path, capsys):
     exit_code, out = _run(
         [
-            "--db-path", str(tmp_path / "agent.db"),
+            "--db-path",
+            str(tmp_path / "agent.db"),
             "--json",
             "do",
-            "--action", "upvote",
-            "--link", "https://www.reddit.com/r/test/s/abc123XYZ",
-            "--account-label", "default",
-            "--actions-dir", str(tmp_path / "actions"),
+            "--action",
+            "upvote",
+            "--link",
+            "https://www.reddit.com/r/test/s/abc123XYZ",
+            "--account-label",
+            "default",
+            "--actions-dir",
+            str(tmp_path / "actions"),
             "--no-run",
         ],
         capsys,
@@ -254,22 +273,25 @@ def test_job_reports_status_and_result(tmp_path, capsys):
     actions_dir = tmp_path / "actions"
     _, out = _run(
         [
-            "--db-path", str(db_path),
+            "--db-path",
+            str(db_path),
             "--json",
             "do",
-            "--action", "save",
-            "--link", CANONICAL_URL,
-            "--account-label", "default",
-            "--actions-dir", str(actions_dir),
+            "--action",
+            "save",
+            "--link",
+            CANONICAL_URL,
+            "--account-label",
+            "default",
+            "--actions-dir",
+            str(actions_dir),
             "--no-run",
         ],
         capsys,
     )
     job_id = json.loads(out)["data"]["jobIds"][0]
 
-    exit_code, out = _run(
-        ["--db-path", str(db_path), "--json", "job", "--id", str(job_id)], capsys
-    )
+    exit_code, out = _run(["--db-path", str(db_path), "--json", "job", "--id", str(job_id)], capsys)
     assert exit_code == 0
     payload = json.loads(out)
     assert payload["ok"] is True
@@ -284,9 +306,7 @@ def test_job_reports_status_and_result(tmp_path, capsys):
         db.complete_queue_job(job_id, success=True, result={"total": 1, "succeeded": 1})
     finally:
         db.close()
-    _, out = _run(
-        ["--db-path", str(db_path), "--json", "job", "--id", str(job_id)], capsys
-    )
+    _, out = _run(["--db-path", str(db_path), "--json", "job", "--id", str(job_id)], capsys)
     done = json.loads(out)["data"]
     assert done["status"] == "succeeded"
     assert done["result"] == {"total": 1, "succeeded": 1}

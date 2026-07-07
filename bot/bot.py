@@ -6,33 +6,30 @@ import contextlib
 import enum
 import logging
 import os
-import random
-import time
 import sys
+import time
 from pathlib import Path
-from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, SessionNotCreatedException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, SessionNotCreatedException
+from selenium.webdriver.support.ui import WebDriverWait
 
+from .actions.base import ActionResult
+from .actions.registry import ActionRegistry
 from .config import BotConfig
 from .database import BotDatabase
 from .reporting import ExecutionSummary, setup_structured_logger
-from .actions.base import ActionResult
-from .actions.registry import ActionRegistry
 from .utils.chromedriver import install_chromedriver
+from .utils.proxy import get_next_proxy, load_proxies
 from .utils.timeouts import Timeouts
-from .utils.retry import retry_action
 from .utils.user_agents import get_random_user_agent
-from .utils.proxy import load_proxies, get_next_proxy
 from .utils.validators import validate_reddit_url
 
 
@@ -50,11 +47,11 @@ class RedditBot:
             result = bot.perform_action("upvote", link="...")
     """
 
-    def __init__(self, config: Optional[BotConfig] = None, verbose: bool = False):
+    def __init__(self, config: BotConfig | None = None, verbose: bool = False):
         self.config = config or BotConfig(verbose=verbose)
         self.summary = ExecutionSummary()
-        self.db: Optional[BotDatabase] = None
-        self._current_account: Optional[str] = None
+        self.db: BotDatabase | None = None
+        self._current_account: str | None = None
 
         # Logger setup
         self.logger = setup_structured_logger(
@@ -101,13 +98,9 @@ class RedditBot:
         # when attaching to an already running Chrome instance.
         if not self.config.use_existing_chrome:
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_experimental_option(
-                "excludeSwitches", ["enable-automation"]
-            )
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option("useAutomationExtension", False)
-            chrome_options.add_experimental_option(
-                "prefs", {"profile.default_content_setting_values.notifications": 2}
-            )
+            chrome_options.add_experimental_option("prefs", {"profile.default_content_setting_values.notifications": 2})
 
         # Headless mode
         if self.config.headless:
@@ -124,14 +117,9 @@ class RedditBot:
                 chrome_options.add_argument(f"--load-extension={extension_path}")
                 self.logger.info(f"Loading Reddit healer extension from {extension_path}")
             elif self.config.use_existing_chrome:
-                self.logger.info(
-                    "Chrome extension healer enabled; ensure the extension is already "
-                    "loaded in the attached Chrome session."
-                )
+                self.logger.info("Chrome extension healer enabled; ensure the extension is already loaded in the attached Chrome session.")
             else:
-                self.logger.warning(
-                    f"Chrome extension healer enabled but extension path does not exist: {extension_path}"
-                )
+                self.logger.warning(f"Chrome extension healer enabled but extension path does not exist: {extension_path}")
 
         # User-Agent rotation
         if self.config.rotate_user_agent:
@@ -148,29 +136,18 @@ class RedditBot:
         # Existing Chrome session support (remote debug or local profile reuse)
         if self.config.use_existing_chrome:
             if self.config.chrome_debugging_address:
-                debugger_address = self._ensure_chrome_debugger_reachable(
-                    self.config.chrome_debugging_address
-                )
+                debugger_address = self._ensure_chrome_debugger_reachable(self.config.chrome_debugging_address)
                 chrome_options.add_experimental_option(
                     "debuggerAddress",
                     debugger_address,
                 )
-                self.logger.info(
-                    f"Attaching to existing Chrome at {debugger_address}"
-                )
+                self.logger.info(f"Attaching to existing Chrome at {debugger_address}")
             elif self.config.chrome_user_data_dir:
-                chrome_user_data_dir = str(
-                    Path(self.config.chrome_user_data_dir).expanduser()
-                )
+                chrome_user_data_dir = str(Path(self.config.chrome_user_data_dir).expanduser())
                 chrome_options.add_argument(f"--user-data-dir={chrome_user_data_dir}")
                 if self.config.chrome_profile_name:
-                    chrome_options.add_argument(
-                        f"--profile-directory={self.config.chrome_profile_name}"
-                    )
-                    self.logger.info(
-                        f"Using existing Chrome profile {self.config.chrome_profile_name} "
-                        f"from {chrome_user_data_dir}"
-                    )
+                    chrome_options.add_argument(f"--profile-directory={self.config.chrome_profile_name}")
+                    self.logger.info(f"Using existing Chrome profile {self.config.chrome_profile_name} from {chrome_user_data_dir}")
                 else:
                     self.logger.info(f"Using existing Chrome user data dir {chrome_user_data_dir}")
 
@@ -180,9 +157,7 @@ class RedditBot:
             fallback_path = os.environ.get("REDDIT_BOT_CHROMEDRIVER", "/usr/local/bin/chromedriver")
             if not fallback_path or not Path(fallback_path).exists():
                 raise RuntimeError(f"Failed to auto-resolve ChromeDriver and fallback path is invalid: {fallback_path}") from exc
-            self.logger.warning(
-                f"Using fallback ChromeDriver at {fallback_path} because manager failed: {exc}"
-            )
+            self.logger.warning(f"Using fallback ChromeDriver at {fallback_path} because manager failed: {exc}")
             service = Service(fallback_path)
         try:
             self.dv = webdriver.Chrome(service=service, options=chrome_options)
@@ -199,9 +174,7 @@ class RedditBot:
         self.dv.implicitly_wait(self.config.selenium_implicit_wait)
 
         # Remove webdriver navigator flag
-        self.dv.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
+        self.dv.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         self.logger.info("Webdriver booted up")
 
@@ -216,14 +189,10 @@ class RedditBot:
             host = parsed.hostname
             port = parsed.port
         except ValueError as exc:
-            raise RuntimeError(
-                f"Invalid Chrome debugger address '{address}'. Use host:port, for example 127.0.0.1:9222."
-            ) from exc
+            raise RuntimeError(f"Invalid Chrome debugger address '{address}'. Use host:port, for example 127.0.0.1:9222.") from exc
 
         if not host or port is None:
-            raise RuntimeError(
-                f"Invalid Chrome debugger address '{address}'. Use host:port, for example 127.0.0.1:9222."
-            )
+            raise RuntimeError(f"Invalid Chrome debugger address '{address}'. Use host:port, for example 127.0.0.1:9222.")
 
         display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
         normalized_address = f"{display_host}:{port}"
@@ -271,7 +240,7 @@ class RedditBot:
 
         return normalized_address
 
-    def __enter__(self) -> "RedditBot":
+    def __enter__(self) -> RedditBot:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -293,11 +262,7 @@ class RedditBot:
         try:
             username_field = self.dv.find_element(By.NAME, "username")
         except NoSuchElementException:
-            WebDriverWait(self.dv, 20).until(
-                EC.frame_to_be_available_and_switch_to_it(
-                    (By.CSS_SELECTOR, "iframe[src*='login']")
-                )
-            )
+            WebDriverWait(self.dv, 20).until(EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, "iframe[src*='login']")))
             username_field = self.dv.find_element(By.NAME, "username")
 
         for ch in username:
@@ -337,9 +302,7 @@ class RedditBot:
 
         authenticated_username = self._reddit_authenticated_username()
         if not authenticated_username:
-            self.logger.warning(
-                "No authenticated session detected in the attached Chrome profile."
-            )
+            self.logger.warning("No authenticated session detected in the attached Chrome profile.")
             return False
 
         self._popup_handler()
@@ -348,12 +311,10 @@ class RedditBot:
         if self.config.session_persistence:
             self._save_session(username)
 
-        self.logger.info(
-            f"Using existing browser authentication for {authenticated_username}"
-        )
+        self.logger.info(f"Using existing browser authentication for {authenticated_username}")
         return True
 
-    def _reddit_authenticated_username(self) -> Optional[str]:
+    def _reddit_authenticated_username(self) -> str | None:
         """Return the current Reddit username if the browser session is authenticated."""
         script = """
             const done = arguments[0];
@@ -392,7 +353,7 @@ class RedditBot:
             return f"Reddit session cookie ({session_cookie_name})"
         return None
 
-    def _reddit_session_cookie_name(self) -> Optional[str]:
+    def _reddit_session_cookie_name(self) -> str | None:
         """Return a Reddit auth cookie name when the browser has a logged-in session."""
         try:
             cookies = self.dv.get_cookies()
@@ -431,9 +392,7 @@ class RedditBot:
 
             if now >= next_log_at:
                 remaining = max(0, int(deadline - now))
-                self.logger.info(
-                    f"Waiting for Reddit login to complete; {remaining}s remaining."
-                )
+                self.logger.info(f"Waiting for Reddit login to complete; {remaining}s remaining.")
                 next_log_at = now + 15
 
             time.sleep(interval_seconds)
@@ -442,25 +401,16 @@ class RedditBot:
 
     def login_interactively(self, username: str) -> None:
         """Pause execution and allow manual browser login, then resume from the logged-in state."""
-        self.logger.info(
-            "Manual login mode: open browser and authenticate, then return here to continue."
-        )
+        self.logger.info("Manual login mode: open browser and authenticate, then return here to continue.")
         self._current_account = username
         self.dv.get(DefaultLinksEnum.LOGIN.value)
         Timeouts.med()
-        print(
-            "\nManual login required. Complete login in the opened browser window."
-        )
+        print("\nManual login required. Complete login in the opened browser window.")
 
         if sys.stdin.isatty():
-            input(
-                "Press Enter after logging in. If Reddit is still finishing login, "
-                "the bot will keep checking for up to 10 minutes..."
-            )
+            input("Press Enter after logging in. If Reddit is still finishing login, the bot will keep checking for up to 10 minutes...")
         else:
-            self.logger.info(
-                "No interactive stdin detected; waiting up to 10 minutes for manual login completion."
-            )
+            self.logger.info("No interactive stdin detected; waiting up to 10 minutes for manual login completion.")
 
         authenticated_username = self._wait_for_reddit_authentication(username)
 
@@ -470,9 +420,7 @@ class RedditBot:
         if self.config.session_persistence:
             self._save_session(username)
 
-        self.logger.info(
-            f"Manual login complete for {authenticated_username} and session saved."
-        )
+        self.logger.info(f"Manual login complete for {authenticated_username} and session saved.")
 
     def login_with_session(self, username: str) -> bool:
         """Attempt to restore a saved session. Returns True if successful."""
@@ -488,7 +436,8 @@ class RedditBot:
         Timeouts.srt()
 
         import json
-        with open(session_file, "r") as f:
+
+        with open(session_file) as f:
             cookies = json.load(f)
 
         for cookie in cookies:
@@ -598,10 +547,9 @@ class RedditBot:
                 return result
             last_result = result
             if attempt < 2:
-                delay = 2.0 * (2 ** attempt)
+                delay = 2.0 * (2**attempt)
                 self.logger.warning(
-                    f"Action '{action_name}' failed (attempt {attempt + 1}/3): {result.message}. "
-                    f"Retrying in {delay:.0f}s..."
+                    f"Action '{action_name}' failed (attempt {attempt + 1}/3): {result.message}. Retrying in {delay:.0f}s..."
                 )
                 time.sleep(delay)
         return last_result
@@ -625,6 +573,7 @@ class RedditBot:
     def _save_session(self, username: str) -> None:
         """Save cookies to disk for session persistence."""
         import json
+
         cookies = self.dv.get_cookies()
         session_file = Path(self.config.session_dir) / f"{username}.cookies"
         with open(session_file, "w") as f:
@@ -633,7 +582,8 @@ class RedditBot:
     def _take_screenshot(self, action: str, link: str) -> str:
         """Capture a screenshot on failure."""
         import re
-        safe_name = re.sub(r'[^\w\-.]', '_', f"{action}_{link[:50]}")
+
+        safe_name = re.sub(r"[^\w\-.]", "_", f"{action}_{link[:50]}")
         ts = int(time.time())
         path = str(Path(self.config.screenshot_dir) / f"{safe_name}_{ts}.png")
         try:
@@ -649,8 +599,9 @@ class RedditBot:
             btn = self.dv.find_element(By.CSS_SELECTOR, "button[aria-label='Close']")
             btn.click()
         with contextlib.suppress(NoSuchElementException):
-            btn = self.dv.find_element(By.XPATH,
-                "/html/body/div[1]/div/div[2]/div[1]/header/div/div[2]/div[2]/div/div[1]/span[2]/div/div[2]/button"
+            btn = self.dv.find_element(
+                By.XPATH,
+                "/html/body/div[1]/div/div[2]/div[1]/header/div/div[2]/div[2]/div/div[1]/span[2]/div/div[2]/button",
             )
             btn.click()
 
@@ -659,9 +610,7 @@ class RedditBot:
             btn = self.dv.find_element(By.CSS_SELECTOR, "button[name='accept']")
             btn.click()
         with contextlib.suppress(NoSuchElementException):
-            btn = self.dv.find_element(By.XPATH,
-                "/html/body/div[1]/div/div/div/div[3]/div/form/div/button"
-            )
+            btn = self.dv.find_element(By.XPATH, "/html/body/div[1]/div/div/div/div[3]/div/form/div/button")
             btn.click()
 
     def reinit_driver(self) -> None:

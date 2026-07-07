@@ -13,8 +13,7 @@ def test_validate_reports_missing_required_fields():
     assert action_schema.validate_action_fields("upvote", {}) == [
         {
             "field": "link",
-            "error": "'upvote' requires 'link': Target Reddit URL. For post actions, "
-            "a canonical /comments/ post URL.",
+            "error": "'upvote' requires 'link': Target Reddit URL. For post actions, a canonical /comments/ post URL.",
         }
     ]
 
@@ -26,12 +25,8 @@ def test_validate_reports_missing_required_fields():
 
 
 def test_validate_accepts_complete_payload():
-    assert action_schema.validate_action_fields(
-        "dm", {"recipient": "u/foo", "message": "hi"}
-    ) == []
-    assert action_schema.validate_action_fields(
-        "upvote", {"link": "https://www.reddit.com/r/x/comments/a/s/"}
-    ) == []
+    assert action_schema.validate_action_fields("dm", {"recipient": "u/foo", "message": "hi"}) == []
+    assert action_schema.validate_action_fields("upvote", {"link": "https://www.reddit.com/r/x/comments/a/s/"}) == []
 
 
 def test_validate_rejects_blank_values():

@@ -11,18 +11,13 @@ import subprocess
 import sys
 import time
 from collections import deque
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from bot import agentctl
-from bot.agentctl import (
-    DEFAULT_DEBUG_ADDRESS,
-    DEFAULT_PROFILE_NAME,
-    EXECUTOR_LOG_PATH,
-    REPO_ROOT,
-)
 from bot.action_schema import (
     ACTION_SCHEMA,
     FIELD_GLOSSARY,
@@ -31,10 +26,16 @@ from bot.action_schema import (
     describe_actions,
     validate_action_fields,
 )
+from bot.agentctl import (
+    DEFAULT_DEBUG_ADDRESS,
+    DEFAULT_PROFILE_NAME,
+    EXECUTOR_LOG_PATH,
+    REPO_ROOT,
+)
 from bot.config import BotConfig
 from bot.database import BotDatabase
+from bot.utils.clock import utc_now
 from bot.utils.input_parser import VALID_ACTIONS, parse_links_file
-
 
 DEFAULT_REDDIT_USER = "u/Particular-Arm2102"
 DEFAULT_ACTIONS_DIR = REPO_ROOT / ".agent-actions"
@@ -42,13 +43,16 @@ ERROR_KEYWORDS = ("error", "failed", "exception", "traceback")
 WEEKDAYS = {"MO", "TU", "WE", "TH", "FR", "SA", "SU"}
 # Transport fields an agent can pass inline to `do`, mirroring ActionEntry.
 INLINE_ACTION_FIELDS = (
-    "link", "comment", "title", "subreddit", "body", "flair", "recipient", "message",
+    "link",
+    "comment",
+    "title",
+    "subreddit",
+    "body",
+    "flair",
+    "recipient",
+    "message",
 )
-QUERY_ACTIONS = {
-    name
-    for name, spec in ACTION_SCHEMA.items()
-    if spec.get("link_kind") == "query"
-}
+QUERY_ACTIONS = {name for name, spec in ACTION_SCHEMA.items() if spec.get("link_kind") == "query"}
 
 
 def _envelope(command: str, *, data: Any = None, ok: bool = True, error: Any = None) -> dict[str, Any]:
@@ -79,10 +83,7 @@ def _print_table(headers: list[str], rows: Iterable[Iterable[Any]]) -> None:
     if not rendered_rows:
         print("(none)")
         return
-    widths = [
-        max(len(str(header)), *(len(row[index]) for row in rendered_rows))
-        for index, header in enumerate(headers)
-    ]
+    widths = [max(len(str(header)), *(len(row[index]) for row in rendered_rows)) for index, header in enumerate(headers)]
     print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
     print("  ".join("-" * width for width in widths))
     for row in rendered_rows:
@@ -236,10 +237,7 @@ def _profile_preflight(args: argparse.Namespace) -> dict[str, Any]:
         detail = probe.get("error") or "debugger unreachable"
         if probe.get("hint"):
             detail = f"{detail} ({probe['hint']})"
-        raise CliError(
-            "Chrome profile preflight failed and --no-open-profile was set: "
-            f"{detail}"
-        )
+        raise CliError(f"Chrome profile preflight failed and --no-open-profile was set: {detail}")
 
     open_result = _open_profile_for_identity(identity, debug_address)
     payload["openedProfile"] = open_result
@@ -259,10 +257,7 @@ def _profile_preflight(args: argparse.Namespace) -> dict[str, Any]:
     detail = probe.get("error") or "probe failed"
     if probe.get("hint"):
         detail = f"{detail} ({probe['hint']})"
-    raise CliError(
-        "Chrome profile opened, but DevTools is still unreachable at "
-        f"{debug_address}: {detail}"
-    )
+    raise CliError(f"Chrome profile opened, but DevTools is still unreachable at {debug_address}: {detail}")
 
 
 def _schedule_identity_args(args: argparse.Namespace) -> list[str]:
@@ -279,11 +274,7 @@ def _repo_codex_automations(payload: dict[str, Any], *, include_all: bool = Fals
     if include_all:
         return automations
     repo = str(REPO_ROOT)
-    return [
-        item
-        for item in automations
-        if repo in [str(path) for path in item.get("cwds", [])]
-    ]
+    return [item for item in automations if repo in [str(path) for path in item.get("cwds", [])]]
 
 
 def _print_overview(payload: dict[str, Any]) -> None:
@@ -294,8 +285,14 @@ def _print_overview(payload: dict[str, Any]) -> None:
         [
             ("cwd", payload.get("cwd")),
             ("db", payload.get("dbPath")),
-            ("queue", ", ".join(f"{key}={value}" for key, value in sorted(queue_counts.items())) or "empty"),
-            ("executor", f"{executor.get('method', '')} running={executor.get('running')} available={executor.get('available')}"),
+            (
+                "queue",
+                ", ".join(f"{key}={value}" for key, value in sorted(queue_counts.items())) or "empty",
+            ),
+            (
+                "executor",
+                f"{executor.get('method', '')} running={executor.get('running')} available={executor.get('available')}",
+            ),
             ("executor log", executor.get("logPath")),
             ("default debug", payload.get("defaultChromeDebugAddress")),
         ]
@@ -304,7 +301,11 @@ def _print_overview(payload: dict[str, Any]) -> None:
     print("\nProject schedules")
     schedules = sorted(
         payload.get("registeredSchedules", []),
-        key=lambda item: (item.get("next_run_at") is None, item.get("next_run_at") or "", item.get("id") or ""),
+        key=lambda item: (
+            item.get("next_run_at") is None,
+            item.get("next_run_at") or "",
+            item.get("id") or "",
+        ),
     )[:8]
     _print_table(
         ["id", "status", "next", "last", "account", "error"],
@@ -508,11 +509,7 @@ def _print_schedule_add(payload: dict[str, Any]) -> None:
             ("executor hint", (payload.get("executor") or {}).get("hint")),
         ]
     )
-    schedules = [
-        item
-        for item in payload.get("schedules", [])
-        if item.get("id") == payload.get("registered")
-    ]
+    schedules = [item for item in payload.get("schedules", []) if item.get("id") == payload.get("registered")]
     if schedules:
         print("\nRegistered row")
         _print_table(
@@ -722,7 +719,10 @@ def _print_queue_recover_stale(payload: dict[str, Any]) -> None:
     _print_kv(
         [
             ("recovered", payload.get("recovered")),
-            ("queue", ", ".join(f"{k}={v}" for k, v in sorted((payload.get("queueCounts") or {}).items()))),
+            (
+                "queue",
+                ", ".join(f"{k}={v}" for k, v in sorted((payload.get("queueCounts") or {}).items())),
+            ),
         ]
     )
     _print_table(
@@ -782,11 +782,7 @@ def _collect_errors_from_db(*, limit: int, db_path: str) -> dict[str, Any]:
     db = BotDatabase(db_path)
     try:
         queue_errors = db.list_queue_jobs(status="failed", limit=limit)
-        schedule_errors = [
-            item
-            for item in db.list_registered_schedules()
-            if item.get("last_error")
-        ][:limit]
+        schedule_errors = [item for item in db.list_registered_schedules() if item.get("last_error")][:limit]
         cursor = db.conn.execute(
             """SELECT id, timestamp, account, action, link, error_message, screenshot_path
                FROM action_log
@@ -1056,7 +1052,7 @@ def _print_capabilities(payload: dict[str, Any]) -> None:
 
 
 def command_capabilities(args: argparse.Namespace) -> int:
-    from bot.agentctl import DEFAULT_DEBUG_ADDRESS, DEFAULT_PROFILE_NAME
+    from bot.agentctl import DEFAULT_PROFILE_NAME
 
     data = describe_actions()
     command_name = getattr(args, "command_name", None) or "capabilities"
@@ -1069,16 +1065,10 @@ def command_capabilities(args: argparse.Namespace) -> int:
     data["howToRun"] = {
         "oneShot": "reddit-tool do --action <action> --link <url> [field flags]",
         "searchUpvote": "reddit-tool search-upvote --query <search query>",
-        "externalSearchUpvote": (
-            "reddit-tool external-search-upvote --query <search query> "
-            "[--subreddit <name>] --json"
-        ),
+        "externalSearchUpvote": ("reddit-tool external-search-upvote --query <search query> [--subreddit <name>] --json"),
         "queueOnly": "reddit-tool queue add --links <file>",
         "schedule": "reddit-tool schedule add --action <action> --link <url> --at <iso>",
-        "scheduleSearchUpvote": (
-            "reddit-tool schedule add --action search_upvote "
-            "--query <search query> --at <iso>"
-        ),
+        "scheduleSearchUpvote": ("reddit-tool schedule add --action search_upvote --query <search query> --at <iso>"),
     }
     try:
         db = _open_db(args)
@@ -1096,11 +1086,7 @@ def command_capabilities(args: argparse.Namespace) -> int:
             payload = _envelope(
                 command_name,
                 ok=False,
-                error=(
-                    f"Unknown action '{action_name}'. Valid actions: "
-                    + ", ".join(sorted(data["actions"]))
-                    + "."
-                ),
+                error=(f"Unknown action '{action_name}'. Valid actions: " + ", ".join(sorted(data["actions"])) + "."),
                 data={"action": action_name},
             )
             _json_or_table(args, payload, _print_capabilities)
@@ -1155,19 +1141,12 @@ def _print_do(payload: dict[str, Any]) -> None:
         print("\nOutcome")
         _print_table(
             ["job", "status", "action", "link", "error"],
-            [
-                [r.get("id"), r.get("status"), r.get("action"), r.get("link"), r.get("lastError")]
-                for r in results
-            ],
+            [[r.get("id"), r.get("status"), r.get("action"), r.get("link"), r.get("lastError")] for r in results],
         )
 
 
 def command_do(args: argparse.Namespace) -> int:
-    provided = {
-        field: getattr(args, field)
-        for field in INLINE_ACTION_FIELDS
-        if getattr(args, field, None)
-    }
+    provided = {field: getattr(args, field) for field in INLINE_ACTION_FIELDS if getattr(args, field, None)}
     if args.action in QUERY_ACTIONS and getattr(args, "query", None) and "link" not in provided:
         provided["link"] = args.query
 
@@ -1261,9 +1240,7 @@ def command_do(args: argparse.Namespace) -> int:
 
     ok = True
     if not args.no_run and submitted:
-        worker = _agentctl_payload(
-            args, ["queue", "worker", "--once", "--max-jobs", str(submitted)]
-        )
+        worker = _agentctl_payload(args, ["queue", "worker", "--once", "--max-jobs", str(submitted)])
         data["ranWorker"] = True
         data["worker"] = worker
         data["results"] = [_job_outcome(args, job_id) for job_id in job_ids]
@@ -1285,7 +1262,7 @@ def _terminal_job_status(status: str | None) -> bool:
     return status in {"succeeded", "failed"}
 
 
-def _selected_result_link(job: dict[str, Any]) -> Optional[str]:
+def _selected_result_link(job: dict[str, Any]) -> str | None:
     result = job.get("result") or {}
     results = result.get("results") if isinstance(result, dict) else None
     if not results:
@@ -1298,14 +1275,10 @@ def _is_post_url(value: str | None) -> bool:
     if not value:
         return False
     parsed = urlparse(value)
-    return (
-        parsed.scheme in {"http", "https"}
-        and parsed.netloc.endswith("reddit.com")
-        and "/comments/" in parsed.path
-    )
+    return parsed.scheme in {"http", "https"} and parsed.netloc.endswith("reddit.com") and "/comments/" in parsed.path
 
 
-def _queue_timestamp(value: str | None) -> Optional[datetime]:
+def _queue_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -1331,11 +1304,7 @@ def _external_search_schedule_id(
     at: str,
     window_seconds: int,
 ) -> str:
-    account = (
-        (identity or {}).get("accountLabel")
-        or (identity or {}).get("redditUsername")
-        or "default"
-    )
+    account = (identity or {}).get("accountLabel") or (identity or {}).get("redditUsername") or "default"
     _, _, bucket = _external_schedule_window(at, window_seconds)
     return f"external-search-upvote-{_slugify(query)}-{_slugify(str(account))}-{bucket}"
 
@@ -1347,7 +1316,7 @@ def _find_matching_search_upvote_job(
     query: str,
     window_start: datetime,
     window_end: datetime,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     if not account:
         return None
     db = _open_db(args)
@@ -1367,7 +1336,7 @@ def _find_matching_search_upvote_job(
     return None
 
 
-def _previous_selected_result_link(args: argparse.Namespace, job: dict[str, Any]) -> Optional[str]:
+def _previous_selected_result_link(args: argparse.Namespace, job: dict[str, Any]) -> str | None:
     db = _open_db(args)
     try:
         jobs = db.list_queue_jobs(status="succeeded", limit=200)
@@ -1392,8 +1361,8 @@ def _previous_selected_result_link(args: argparse.Namespace, job: dict[str, Any]
 def _selected_post_url_from_outcomes(
     args: argparse.Namespace,
     outcomes: list[dict[str, Any]],
-) -> Optional[str]:
-    fallback: Optional[str] = None
+) -> str | None:
+    fallback: str | None = None
     for item in outcomes:
         selected = _selected_result_link(item)
         if _is_post_url(selected):
@@ -1408,7 +1377,7 @@ def _selected_post_url_from_outcomes(
 
 def _selection_details_from_outcomes(
     outcomes: list[dict[str, Any]],
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Pull the structured search_upvote diagnostics (attempts/skip trace) out of
     the first job result that carries them, for the normalized envelope."""
     for item in outcomes:
@@ -1510,7 +1479,7 @@ def command_external_search_upvote(args: argparse.Namespace) -> int:
         _json_or_table(args, payload, _print_external_search_upvote)
         return 2
 
-    at = args.at or datetime.utcnow().replace(microsecond=0).isoformat()
+    at = args.at or utc_now().replace(microsecond=0).isoformat()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     data: dict[str, Any] = {
         "query": args.query,
@@ -1670,7 +1639,7 @@ def command_external_search_upvote(args: argparse.Namespace) -> int:
         "--id",
         schedule_id,
         "--now",
-        args.run_due_now or datetime.utcnow().replace(microsecond=0).isoformat(),
+        args.run_due_now or utc_now().replace(microsecond=0).isoformat(),
         "--limit",
         str(args.limit),
         "--priority",
@@ -1685,12 +1654,7 @@ def command_external_search_upvote(args: argparse.Namespace) -> int:
     data["scheduleIdsProcessed"] = [item.get("id") for item in run_due.get("processed", [])]
     data["scheduleIdProcessed"] = data["scheduleIdsProcessed"][0] if data["scheduleIdsProcessed"] else None
 
-    job_ids = [
-        int(job_id)
-        for item in run_due.get("processed", [])
-        for job_id in item.get("jobIds", [])
-        if job_id is not None
-    ]
+    job_ids = [int(job_id) for item in run_due.get("processed", []) for job_id in item.get("jobIds", []) if job_id is not None]
     data["jobIds"] = job_ids
     if not job_ids:
         data["mutationStatus"] = "no_due_job"
@@ -1810,10 +1774,8 @@ def _prompt_menu_choice(label: str, choices: set[str]) -> str:
         print(f"Choose one of: {', '.join(sorted(choices))}")
 
 
-def _identity_prompt() -> dict[str, Optional[str]]:
-    raw = _prompt(
-        "Identity blank=default, or account:<label>, profile:<name>, reddit:<user>"
-    )
+def _identity_prompt() -> dict[str, str | None]:
+    raw = _prompt("Identity blank=default, or account:<label>, profile:<name>, reddit:<user>")
     identity = {"account_label": None, "profile_name": None, "reddit_user": None}
     if not raw:
         return identity
@@ -1841,9 +1803,7 @@ def _menu_capabilities(args: argparse.Namespace) -> None:
 
 
 def _menu_schedules(args: argparse.Namespace) -> None:
-    command_schedule_list(
-        _menu_args(args, include_crontab=False, all_codex=False, limit=50)
-    )
+    command_schedule_list(_menu_args(args, include_crontab=False, all_codex=False, limit=50))
 
 
 def _menu_queue(args: argparse.Namespace) -> None:
@@ -2076,10 +2036,22 @@ def build_parser() -> argparse.ArgumentParser:
     do_parser.add_argument("--recipient", help="Recipient username for `dm`.")
     do_parser.add_argument("--message", help="Message body for `dm`.")
     do_parser.add_argument("--query", help="Search query for query-based actions (alias for --link).")
-    do_parser.add_argument("--actions-dir", default=str(DEFAULT_ACTIONS_DIR), help="Directory for the generated action file.")
+    do_parser.add_argument(
+        "--actions-dir",
+        default=str(DEFAULT_ACTIONS_DIR),
+        help="Directory for the generated action file.",
+    )
     do_parser.add_argument("--no-run", action="store_true", help="Queue the action but do not run the worker pass.")
-    do_parser.add_argument("--no-profile-preflight", action="store_true", help="Skip Chrome profile validation before running the worker.")
-    do_parser.add_argument("--no-open-profile", action="store_true", help="Validate Chrome DevTools but do not open the saved profile if it is down.")
+    do_parser.add_argument(
+        "--no-profile-preflight",
+        action="store_true",
+        help="Skip Chrome profile validation before running the worker.",
+    )
+    do_parser.add_argument(
+        "--no-open-profile",
+        action="store_true",
+        help="Validate Chrome DevTools but do not open the saved profile if it is down.",
+    )
     _add_identity_options(do_parser)
     do_parser.set_defaults(func=command_do)
 
@@ -2091,10 +2063,22 @@ def build_parser() -> argparse.ArgumentParser:
     search_upvote_parser.add_argument("--query", required=True, help="Reddit search query.")
     search_upvote_parser.add_argument("--link", help=argparse.SUPPRESS)
     search_upvote_parser.add_argument("--subreddit", help="Optional subreddit scope.")
-    search_upvote_parser.add_argument("--actions-dir", default=str(DEFAULT_ACTIONS_DIR), help="Directory for the generated action file.")
+    search_upvote_parser.add_argument(
+        "--actions-dir",
+        default=str(DEFAULT_ACTIONS_DIR),
+        help="Directory for the generated action file.",
+    )
     search_upvote_parser.add_argument("--no-run", action="store_true", help="Queue the action but do not run the worker pass.")
-    search_upvote_parser.add_argument("--no-profile-preflight", action="store_true", help="Skip Chrome profile validation before running the worker.")
-    search_upvote_parser.add_argument("--no-open-profile", action="store_true", help="Validate Chrome DevTools but do not open the saved profile if it is down.")
+    search_upvote_parser.add_argument(
+        "--no-profile-preflight",
+        action="store_true",
+        help="Skip Chrome profile validation before running the worker.",
+    )
+    search_upvote_parser.add_argument(
+        "--no-open-profile",
+        action="store_true",
+        help="Validate Chrome DevTools but do not open the saved profile if it is down.",
+    )
     _add_identity_options(search_upvote_parser)
     search_upvote_parser.set_defaults(func=command_search_upvote)
 
@@ -2114,7 +2098,11 @@ def build_parser() -> argparse.ArgumentParser:
     external_search_parser.add_argument("--source", default="external-project")
     external_search_parser.add_argument("--at", help="One-time run at ISO datetime. Defaults to now in UTC.")
     external_search_parser.add_argument("--run-due-now", default="", help="Override scheduler run time as ISO datetime.")
-    external_search_parser.add_argument("--actions-dir", default=str(DEFAULT_ACTIONS_DIR), help="Directory for generated action files.")
+    external_search_parser.add_argument(
+        "--actions-dir",
+        default=str(DEFAULT_ACTIONS_DIR),
+        help="Directory for generated action files.",
+    )
     external_search_parser.add_argument("--priority", type=int, default=100)
     external_search_parser.add_argument("--limit", type=int, default=1)
     external_search_parser.add_argument("--timeout", type=float, default=30.0, help="Seconds to poll for terminal job result.")
@@ -2126,9 +2114,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reuse the generated schedule/job identity for retries in this time window.",
     )
     external_search_parser.add_argument("--ensure-executor", action="store_true", help="Also try to ensure the background executor.")
-    external_search_parser.add_argument("--no-run-due", action="store_true", help="Only register the schedule; do not run due work now.")
-    external_search_parser.add_argument("--no-profile-preflight", action="store_true", help="Skip Chrome DevTools validation before running due work.")
-    external_search_parser.add_argument("--no-open-profile", action="store_true", help="Validate Chrome DevTools but do not open the saved profile if it is down.")
+    external_search_parser.add_argument(
+        "--no-run-due",
+        action="store_true",
+        help="Only register the schedule; do not run due work now.",
+    )
+    external_search_parser.add_argument(
+        "--no-profile-preflight",
+        action="store_true",
+        help="Skip Chrome DevTools validation before running due work.",
+    )
+    external_search_parser.add_argument(
+        "--no-open-profile",
+        action="store_true",
+        help="Validate Chrome DevTools but do not open the saved profile if it is down.",
+    )
     external_search_parser.add_argument("--verbose", action="store_true")
     _add_identity_options(external_search_parser)
     external_search_parser.set_defaults(func=command_external_search_upvote)
@@ -2163,14 +2163,22 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_add_parser.add_argument("--query", help="Search query for query-based actions such as search_upvote.")
     schedule_add_parser.add_argument("--action", choices=sorted(VALID_ACTIONS), help="Action for --link.")
     schedule_add_parser.add_argument("--comment", help="Optional comment/body field for pipe-delimited actions.")
-    schedule_add_parser.add_argument("--actions-dir", default=str(DEFAULT_ACTIONS_DIR), help="Directory for generated action files.")
+    schedule_add_parser.add_argument(
+        "--actions-dir",
+        default=str(DEFAULT_ACTIONS_DIR),
+        help="Directory for generated action files.",
+    )
     schedule_add_parser.add_argument("--rrule", help="Raw RRULE text, for example FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0.")
     schedule_add_parser.add_argument("--next-run-at", default="", help="Override first run time for --rrule, as an ISO datetime.")
     schedule_add_parser.add_argument("--at", help="One-time run at ISO datetime, for example 2026-07-06T09:00:00.")
     schedule_add_parser.add_argument("--daily-at", help="Run daily at HH:MM.")
     schedule_add_parser.add_argument("--weekly", help="Run weekly on weekdays, for example MO,WE,FR.")
     schedule_add_parser.add_argument("--time", default="09:00", help="HH:MM time used with --weekly.")
-    schedule_add_parser.add_argument("--no-ensure-executor", action="store_true", help="Register without ensuring the local executor.")
+    schedule_add_parser.add_argument(
+        "--no-ensure-executor",
+        action="store_true",
+        help="Register without ensuring the local executor.",
+    )
     _add_identity_options(schedule_add_parser)
     schedule_add_parser.set_defaults(func=command_schedule_add)
 
@@ -2213,7 +2221,11 @@ def build_parser() -> argparse.ArgumentParser:
     executor_parser.add_argument("--allow-pid-fallback", action="store_true")
     executor_parser.set_defaults(func=command_executor)
 
-    errors_parser = subparsers.add_parser("errors", aliases=["last-errors"], help="Show recent queue, schedule, action, and executor errors.")
+    errors_parser = subparsers.add_parser(
+        "errors",
+        aliases=["last-errors"],
+        help="Show recent queue, schedule, action, and executor errors.",
+    )
     errors_parser.add_argument("--limit", type=int, default=10)
     errors_parser.set_defaults(func=command_errors)
 
@@ -2259,7 +2271,7 @@ def _normalize_global_flags(argv: list[str]) -> list[str]:
     return [*prefix, *normalized]
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     if argv is None:
         argv = sys.argv[1:]

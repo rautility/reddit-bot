@@ -5,21 +5,12 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-
 REDDIT_DOMAINS = {"reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com"}
 
-REDDIT_POST_PATTERN = re.compile(
-    r"https?://(www\.|old\.|new\.)?reddit\.com/r/\w+/comments/\w+"
-)
-REDDIT_SUBREDDIT_PATTERN = re.compile(
-    r"https?://(www\.|old\.|new\.)?reddit\.com/r/\w+/?$"
-)
-REDDIT_USER_PATTERN = re.compile(
-    r"https?://(www\.|old\.|new\.)?reddit\.com/u(ser)?/\w+"
-)
-REDDIT_SHARE_PATTERN = re.compile(
-    r"https?://(www\.|old\.|new\.)?reddit\.com/r/\w+/s/\w+/?"
-)
+REDDIT_POST_PATTERN = re.compile(r"https?://(www\.|old\.|new\.)?reddit\.com/r/\w+/comments/\w+")
+REDDIT_SUBREDDIT_PATTERN = re.compile(r"https?://(www\.|old\.|new\.)?reddit\.com/r/\w+/?$")
+REDDIT_USER_PATTERN = re.compile(r"https?://(www\.|old\.|new\.)?reddit\.com/u(ser)?/\w+")
+REDDIT_SHARE_PATTERN = re.compile(r"https?://(www\.|old\.|new\.)?reddit\.com/r/\w+/s/\w+/?")
 
 
 def validate_reddit_url(url: str) -> bool:

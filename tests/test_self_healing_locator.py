@@ -26,7 +26,7 @@ def test_self_healing_locator_reuses_cached_selector(tmp_path, mocker):
                 "version": 1,
                 "selectors": {
                     "upvote": {
-                        "selector": "button[aria-label=\"Upvote\"]",
+                        "selector": 'button[aria-label="Upvote"]',
                         "labels": ["upvote"],
                     }
                 },
@@ -51,7 +51,7 @@ def test_self_healing_locator_persists_console_probe_selector(tmp_path, mocker):
     driver = mocker.Mock()
     driver.execute_script.return_value = {
         "element": element,
-        "selector": "button[aria-label=\"Upvote\"]",
+        "selector": 'button[aria-label="Upvote"]',
         "evidence": {"score": 110},
         "candidates": [],
     }
@@ -63,7 +63,7 @@ def test_self_healing_locator_persists_console_probe_selector(tmp_path, mocker):
 
     assert found is element
     cache = json.loads((tmp_path / "selectors.json").read_text())
-    assert cache["selectors"]["upvote"]["selector"] == "button[aria-label=\"Upvote\"]"
+    assert cache["selectors"]["upvote"]["selector"] == 'button[aria-label="Upvote"]'
     assert cache["selectors"]["upvote"]["evidence"] == {"score": 110}
 
 

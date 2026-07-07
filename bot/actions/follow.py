@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from selenium.webdriver.common.by import By
-from .base import BaseAction, ActionResult
+
 from bot.utils.timeouts import Timeouts
+
+from .base import ActionResult, BaseAction
 
 
 class FollowAction(BaseAction):

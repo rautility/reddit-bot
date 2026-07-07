@@ -1,10 +1,9 @@
 """Tests for the database tracking module."""
 
-import os
-
 import pytest
 
 from bot.database import BotDatabase
+from bot.utils.clock import utc_now_iso
 
 
 @pytest.fixture
@@ -16,6 +15,13 @@ def db(tmp_path):
 
 
 class TestBotDatabase:
+    def test_utc_now_iso_preserves_legacy_sortable_naive_format(self):
+        now = utc_now_iso()
+
+        assert "+00:00" not in now
+        assert "Z" not in now
+        assert "2026-01-01T00:00:00" < now
+
     def test_log_action(self, db):
         db.log_action("user1", "upvote", "https://reddit.com/r/test/comments/abc")
         assert db.was_action_performed("user1", "upvote", "https://reddit.com/r/test/comments/abc")
@@ -184,12 +190,8 @@ class TestBotDatabase:
         assert association["reddit_username"] == "Particular-Arm2102"
         assert association["account_label"] == "Particular-Arm2102"
 
-        by_profile = db.get_chrome_profile_association(
-            profile_name="Chrome Reddit Bot Debug Profile"
-        )
-        by_user = db.get_chrome_profile_association(
-            reddit_username="u/Particular-Arm2102"
-        )
+        by_profile = db.get_chrome_profile_association(profile_name="Chrome Reddit Bot Debug Profile")
+        by_user = db.get_chrome_profile_association(reddit_username="u/Particular-Arm2102")
 
         assert by_profile == by_user
         assert db.list_chrome_profile_associations()[0]["debug_address"] == "127.0.0.1:9222"

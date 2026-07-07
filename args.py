@@ -11,26 +11,30 @@ def cmdline_args() -> dict:
 
     # ─── Required inputs ─────────────────────────────────────
     parser.add_argument(
-        "-a", "--accounts",
+        "-a",
+        "--accounts",
         dest="accounts",
         help="Path to file containing account credentials (pipe-delimited, CSV, or JSON).",
     )
     parser.add_argument(
-        "-l", "--links",
+        "-l",
+        "--links",
         dest="links",
         help="Path to file containing links and actions (pipe-delimited, CSV, or JSON).",
     )
 
     # ─── Config file ─────────────────────────────────────────
     parser.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         dest="config",
         help="Path to YAML configuration file.",
     )
 
     # ─── Modes ───────────────────────────────────────────────
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         dest="verbose",
         action="store_true",
         help="Enable verbose logging to stdout.",

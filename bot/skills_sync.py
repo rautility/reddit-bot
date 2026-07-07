@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import shutil
 from pathlib import Path
-from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = REPO_ROOT / ".claude" / "skills" / "reddit-bot"
@@ -22,11 +21,7 @@ def _tree(root: Path) -> dict[str, bytes]:
     """Map every file under ``root`` to its bytes, keyed by relative path."""
     if not root.exists():
         return {}
-    return {
-        str(path.relative_to(root)): path.read_bytes()
-        for path in sorted(root.rglob("*"))
-        if path.is_file()
-    }
+    return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
 
 
 def diff(canonical: Path = CANONICAL, mirror: Path = MIRROR) -> list[str]:
@@ -53,7 +48,7 @@ def sync(canonical: Path = CANONICAL, mirror: Path = MIRROR) -> list[str]:
     return sorted(str(p.relative_to(mirror)) for p in mirror.rglob("*") if p.is_file())
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="sync-skills",
         description="Mirror the reddit-bot skill from .claude/skills to .codex/skills.",

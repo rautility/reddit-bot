@@ -1,9 +1,5 @@
 """Tests for BotConfig loading and merging."""
 
-import os
-import tempfile
-
-import pytest
 import yaml
 
 from bot.config import BotConfig

@@ -5,12 +5,13 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
+from selenium.webdriver.common.by import By
 
-from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
 from bot.utils.visible_vote import click_visible_vote_control
+
+from .base import ActionResult, BaseAction
 
 
 class VoteAction(BaseAction):
@@ -166,29 +167,21 @@ class VoteAction(BaseAction):
         min_confidence = getattr(self.config, "chrome_extension_min_confidence", 0.72)
         if candidate.confidence < min_confidence:
             self.logger.info(
-                f"Chrome extension healer skipped low-confidence {label} candidate "
-                f"({candidate.confidence:.2f} < {min_confidence:.2f})"
+                f"Chrome extension healer skipped low-confidence {label} candidate ({candidate.confidence:.2f} < {min_confidence:.2f})"
             )
             return None
         if candidate.state.get("disabled"):
             self._last_extension_disabled_vote_candidate = candidate
-            self.logger.info(
-                f"Chrome extension healer found {label} control but it is disabled"
-            )
+            self.logger.info(f"Chrome extension healer found {label} control but it is disabled")
             return None
 
         element = bridge.element_for_candidate(candidate, post_url=link)
         if element is None:
-            self.logger.info(
-                f"Chrome extension healer found {label} candidate but Selenium could not reselect it"
-            )
+            self.logger.info(f"Chrome extension healer found {label} candidate but Selenium could not reselect it")
             return None
 
         self._last_extension_vote_candidate = (bridge, candidate)
-        self.logger.info(
-            f"Chrome extension healer selected {label} control "
-            f"({candidate.confidence:.2f} confidence)"
-        )
+        self.logger.info(f"Chrome extension healer selected {label} control ({candidate.confidence:.2f} confidence)")
         return element
 
     def _extension_vote_is_registered(self, label: str, link: str) -> bool:
@@ -232,10 +225,7 @@ class VoteAction(BaseAction):
         if not isinstance(fallback, dict):
             return ""
 
-        message = (
-            f"; visibleFallback clicked={fallback.get('clicked')} "
-            f"confirmed={fallback.get('confirmed')}"
-        )
+        message = f"; visibleFallback clicked={fallback.get('clicked')} confirmed={fallback.get('confirmed')}"
         if fallback.get("source"):
             message += f" source={fallback.get('source')}"
         click = fallback.get("click") or {}
@@ -323,7 +313,8 @@ class VoteAction(BaseAction):
                         current = current.parentElement;
                     }
                     if (button.querySelectorAll) {
-                        for (const child of button.querySelectorAll('[aria-pressed],[aria-selected],[data-state],[data-vote-state],[class]')) {
+                        const stateSelector = '[aria-pressed],[aria-selected],[data-state],[data-vote-state],[class]';
+                        for (const child of button.querySelectorAll(stateSelector)) {
                             targets.push(child);
                         }
                     }
@@ -345,10 +336,7 @@ class VoteAction(BaseAction):
             center = diagnostics.get("center") or {}
             topmost_attrs = topmost.get("attrs") or {}
             topmost_action = topmost_attrs.get("data-action-bar-action") or topmost_attrs.get("aria-label")
-            message += (
-                f"; click center=({center.get('x')},{center.get('y')}) "
-                f"topmostMatches={diagnostics.get('topmostMatches')}"
-            )
+            message += f"; click center=({center.get('x')},{center.get('y')}) topmostMatches={diagnostics.get('topmostMatches')}"
             if topmost.get("tag"):
                 message += f" topmost={topmost.get('tag')}"
             if topmost_action:
@@ -358,8 +346,7 @@ class VoteAction(BaseAction):
         if isinstance(response, dict):
             state = response.get("state") or {}
             message += (
-                f"; healerConfirmed={response.get('confirmed')} "
-                f"ariaPressed={state.get('ariaPressed')} dataState={state.get('dataState')}"
+                f"; healerConfirmed={response.get('confirmed')} ariaPressed={state.get('ariaPressed')} dataState={state.get('dataState')}"
             )
 
         fallback = getattr(self, "_last_visible_vote_fallback_response", None)
@@ -478,14 +465,10 @@ class VoteAction(BaseAction):
 
     def _handle_nsfw(self) -> None:
         with contextlib.suppress(NoSuchElementException):
-            btn = self.driver.find_element(
-                By.CSS_SELECTOR, "button.nsfw-gate-btn, button[name='over18']"
-            )
+            btn = self.driver.find_element(By.CSS_SELECTOR, "button.nsfw-gate-btn, button[name='over18']")
             btn.click()
             Timeouts.srt()
         with contextlib.suppress(NoSuchElementException):
-            btn = self.driver.find_element(By.XPATH,
-                "/html/body/div[1]/div/div[2]/div[2]/div/div/div[1]/div/div/div[2]/button"
-            )
+            btn = self.driver.find_element(By.XPATH, "/html/body/div[1]/div/div[2]/div[2]/div/div/div[1]/div/div/div[2]/button")
             btn.click()
             Timeouts.srt()

@@ -17,17 +17,17 @@ import time
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from bot.config import BotConfig
 from bot.database import BotDatabase
 from bot.reporting import setup_structured_logger
+from bot.utils.clock import utc_now
 from bot.utils.credentials import Account
 from bot.utils.input_parser import ActionEntry, parse_links_file
 from bot.utils.validators import is_post_url, is_share_url, validate_reddit_url
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROFILE_PREFIX = "Chrome Reddit Bot Debug Profile"
@@ -84,7 +84,7 @@ def _parse_rrule_text(rrule_text: str) -> dict[str, str]:
     return parts
 
 
-def _parse_dtstart(value: str) -> Optional[datetime]:
+def _parse_dtstart(value: str) -> datetime | None:
     if not value:
         return None
     for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M", "%Y%m%d"):
@@ -99,7 +99,7 @@ def _next_run_after(
     rrule_text: str,
     after: datetime,
     previous_runs: int = 0,
-) -> Optional[datetime]:
+) -> datetime | None:
     parts = _parse_rrule_text(rrule_text)
     freq = parts.get("FREQ", "").upper()
     count = int(parts["COUNT"]) if parts.get("COUNT", "").isdigit() else None
@@ -119,11 +119,7 @@ def _next_run_after(
 
     if freq == "WEEKLY":
         bydays = parts.get("BYDAY")
-        weekdays = (
-            [WEEKDAY_INDEX[day] for day in bydays.split(",") if day in WEEKDAY_INDEX]
-            if bydays
-            else [dtstart.weekday()]
-        )
+        weekdays = [WEEKDAY_INDEX[day] for day in bydays.split(",") if day in WEEKDAY_INDEX] if bydays else [dtstart.weekday()]
         candidates = []
         base_date = after.date()
         for offset in range(0, 8):
@@ -179,7 +175,7 @@ def discover_saved_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
-def _profile_by_name(profile_name: str) -> Optional[dict[str, Any]]:
+def _profile_by_name(profile_name: str) -> dict[str, Any] | None:
     for profile in discover_saved_profiles():
         if profile["profileName"] == profile_name:
             return profile
@@ -189,13 +185,9 @@ def _profile_by_name(profile_name: str) -> Optional[dict[str, Any]]:
 def _association_for_profile(
     associations: list[dict[str, Any]],
     profile_name: str,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     return next(
-        (
-            association
-            for association in associations
-            if association["profile_name"] == profile_name
-        ),
+        (association for association in associations if association["profile_name"] == profile_name),
         None,
     )
 
@@ -234,9 +226,9 @@ def discover_profiles_with_associations(db: BotDatabase) -> list[dict[str, Any]]
 def _resolve_profile_identity(
     db: BotDatabase,
     *,
-    account_label: Optional[str] = None,
-    profile_name: Optional[str] = None,
-    reddit_user: Optional[str] = None,
+    account_label: str | None = None,
+    profile_name: str | None = None,
+    reddit_user: str | None = None,
 ) -> dict[str, Any]:
     """Resolve account/profile identity from an explicit label, profile, or user."""
     association = None
@@ -257,10 +249,7 @@ def _resolve_profile_identity(
     elif reddit_user:
         association = db.get_chrome_profile_association(reddit_username=reddit_user)
         if association is None:
-            raise SystemExit(
-                f"Unknown Reddit username association: {reddit_user}. "
-                "Run `agentctl profiles associate` first."
-            )
+            raise SystemExit(f"Unknown Reddit username association: {reddit_user}. Run `agentctl profiles associate` first.")
     elif account_label:
         association = db.get_chrome_profile_association(account_label=account_label)
 
@@ -369,11 +358,7 @@ def _read_crontab() -> dict[str, Any]:
         return {"available": False, "error": completed.stderr.strip()}
     return {
         "available": True,
-        "entries": [
-            line
-            for line in completed.stdout.splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ],
+        "entries": [line for line in completed.stdout.splitlines() if line.strip() and not line.lstrip().startswith("#")],
     }
 
 
@@ -429,10 +414,7 @@ def _validate_canonical_post_actions(entries: list[ActionEntry]) -> list[dict[st
                     "line": index,
                     "link": link,
                     "action": action,
-                    "error": (
-                        "Post action requires a canonical Reddit post URL matching "
-                        "/r/<subreddit>/comments/<post_id>/..."
-                    ),
+                    "error": ("Post action requires a canonical Reddit post URL matching /r/<subreddit>/comments/<post_id>/..."),
                 }
             )
     return errors
@@ -506,11 +488,7 @@ def command_profiles_associate(args: argparse.Namespace) -> int:
     try:
         profile = _profile_by_name(args.profile_name)
         profile_path = args.profile_path or (profile or {}).get("profilePath")
-        debug_address = (
-            args.debug_address
-            or (profile or {}).get("suggestedDebugAddress")
-            or DEFAULT_DEBUG_ADDRESS
-        )
+        debug_address = args.debug_address or (profile or {}).get("suggestedDebugAddress") or DEFAULT_DEBUG_ADDRESS
         association = db.associate_chrome_profile(
             args.profile_name,
             args.reddit_user,
@@ -602,7 +580,7 @@ def command_schedules_register(args: argparse.Namespace) -> int:
         if not next_run_at and args.rrule:
             next_run = _next_run_after(
                 args.rrule,
-                datetime.utcnow() - timedelta(seconds=1),
+                utc_now() - timedelta(seconds=1),
             )
             next_run_at = next_run.isoformat() if next_run else None
         db.register_schedule(
@@ -655,7 +633,7 @@ def command_schedules_register(args: argparse.Namespace) -> int:
 
 def _run_due_schedules(args: argparse.Namespace) -> dict[str, Any]:
     worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}"
-    now = _parse_dt(args.now) if args.now else datetime.utcnow()
+    now = _parse_dt(args.now) if args.now else utc_now()
     db = _open_db(args)
     processed = []
     recovered_stale = []
@@ -679,10 +657,7 @@ def _run_due_schedules(args: argparse.Namespace) -> dict[str, Any]:
                     raise ValueError("Schedule must resolve to an account before execution.")
                 entries, link_errors = _parse_agent_links_file(links_path)
                 if link_errors:
-                    raise ValueError(
-                        "Links file contains unsupported Reddit URL formats: "
-                        + json.dumps(link_errors, sort_keys=True)
-                    )
+                    raise ValueError("Links file contains unsupported Reddit URL formats: " + json.dumps(link_errors, sort_keys=True))
                 for entry in entries:
                     payload = asdict(entry)
                     payload["_agent_profile"] = {
@@ -718,15 +693,8 @@ def _run_due_schedules(args: argparse.Namespace) -> dict[str, Any]:
                         "id": schedule["id"],
                         "submitted": len(submitted_jobs),
                         "jobIds": [job["id"] for job in submitted_jobs],
-                        "jobStatuses": [
-                            {"id": job["id"], "status": job["status"]}
-                            for job in submitted_jobs
-                        ],
-                        "queuedJobIds": [
-                            job["id"]
-                            for job in submitted_jobs
-                            if job.get("status") == "queued"
-                        ],
+                        "jobStatuses": [{"id": job["id"], "status": job["status"]} for job in submitted_jobs],
+                        "queuedJobIds": [job["id"] for job in submitted_jobs if job.get("status") == "queued"],
                         "nextRunAt": next_run.isoformat() if next_run else None,
                     }
                 )
@@ -743,11 +711,7 @@ def _run_due_schedules(args: argparse.Namespace) -> dict[str, Any]:
         db.close()
 
     worker_payload = None
-    runnable_job_ids = [
-        job_id
-        for item in processed
-        for job_id in item.get("queuedJobIds", [])
-    ]
+    runnable_job_ids = [job_id for item in processed for job_id in item.get("queuedJobIds", [])]
     total_submitted = sum(item.get("submitted", 0) for item in processed)
     if args.run_worker and runnable_job_ids:
         worker_args = argparse.Namespace(
@@ -768,10 +732,7 @@ def _run_due_schedules(args: argparse.Namespace) -> dict[str, Any]:
         diagnostics.append(
             {
                 "code": "no_runnable_jobs",
-                "message": (
-                    "Due schedules resolved only to active non-queued jobs. "
-                    "They may already be running because of deduplication."
-                ),
+                "message": ("Due schedules resolved only to active non-queued jobs. They may already be running because of deduplication."),
             }
         )
 
@@ -1188,13 +1149,9 @@ def _run_queue_worker(args: argparse.Namespace) -> dict[str, Any]:
 
     while args.max_jobs == 0 or processed < args.max_jobs:
         db = BotDatabase(config.db_path)
-        job: Optional[dict[str, Any]] = None
+        job: dict[str, Any] | None = None
         lease_acquired = False
-        lease_resource = (
-            config.chrome_debugging_address
-            or config.chrome_user_data_dir
-            or DEFAULT_DEBUG_ADDRESS
-        )
+        lease_resource = config.chrome_debugging_address or config.chrome_user_data_dir or DEFAULT_DEBUG_ADDRESS
         try:
             job = db.lease_next_job(worker_id, lease_seconds=args.lease_seconds)
             if job is None:
@@ -1205,11 +1162,7 @@ def _run_queue_worker(args: argparse.Namespace) -> dict[str, Any]:
 
             job_payload = json.loads(job["payload_json"])
             agent_profile = job_payload.get("_agent_profile") or {}
-            lease_resource = (
-                agent_profile.get("debugAddress")
-                or agent_profile.get("profilePath")
-                or lease_resource
-            )
+            lease_resource = agent_profile.get("debugAddress") or agent_profile.get("profilePath") or lease_resource
             lease_acquired, lease_message = db.acquire_lease(
                 "chrome_profile",
                 lease_resource,
@@ -1271,6 +1224,7 @@ def command_queue_worker(args: argparse.Namespace) -> int:
 def _attached_chrome_driver(debug_address: str):
     from selenium import webdriver
     from selenium.webdriver.chrome.service import Service
+
     from bot.utils.chromedriver import install_chromedriver
 
     options = webdriver.ChromeOptions()
@@ -1286,7 +1240,7 @@ def command_vote_click_visible(args: argparse.Namespace) -> int:
     worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}"
     lease_acquired = False
     lease_resource = DEFAULT_DEBUG_ADDRESS
-    reservation_id: Optional[int] = None
+    reservation_id: int | None = None
     action_logged = False
     driver = None
     try:
@@ -1364,13 +1318,9 @@ def command_vote_click_visible(args: argparse.Namespace) -> int:
             settle_seconds=args.settle_seconds,
             screenshot_path=args.screenshot,
         )
-        action_success = bool(
-            result.get("ok") and result.get("clicked") and result.get("confirmed")
-        )
+        action_success = bool(result.get("ok") and result.get("clicked") and result.get("confirmed"))
         action_message = (
-            "Visible vote click confirmed."
-            if action_success
-            else result.get("error") or "Visible vote click was not confirmed."
+            "Visible vote click confirmed." if action_success else result.get("error") or "Visible vote click was not confirmed."
         )
         db.log_action(
             account,
@@ -1591,7 +1541,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)

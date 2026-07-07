@@ -1,14 +1,11 @@
 """Tests for credential parsing and encryption."""
 
 import json
-import os
-
-import pytest
 
 from bot.utils.credentials import (
+    Account,
     read_accounts,
     read_accounts_from_env,
-    Account,
 )
 
 
@@ -54,7 +51,6 @@ class TestReadAccountsJson:
         accounts = read_accounts(str(f))
         assert len(accounts) == 2
         assert accounts[0] == Account("user1", "pass1")
-
 
 
 # Encryption tests are in tests/test_encryption.py (separate file)

@@ -100,9 +100,7 @@ def test_wait_for_reddit_authentication_polls_until_username(mocker):
     bot = RedditBot.__new__(RedditBot)
     bot.dv = mocker.Mock()
     bot.logger = mocker.Mock()
-    bot._reddit_authenticated_username = mocker.Mock(
-        side_effect=[None, "reddit_user"]
-    )
+    bot._reddit_authenticated_username = mocker.Mock(side_effect=[None, "reddit_user"])
     mocker.patch("bot.bot.Timeouts.srt")
     sleep = mocker.patch("bot.bot.time.sleep")
 

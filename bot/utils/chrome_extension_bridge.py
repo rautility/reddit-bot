@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from selenium.common.exceptions import WebDriverException
 
@@ -24,7 +24,7 @@ class ChromeControlCandidate:
     actionable: bool = True
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChromeControlCandidate":
+    def from_dict(cls, data: dict[str, Any]) -> ChromeControlCandidate:
         return cls(
             id=str(data.get("id") or ""),
             intent=str(data.get("intent") or ""),
@@ -47,7 +47,7 @@ class ChromeControlResult:
     intent: str = ""
     url: str = ""
     error: str = ""
-    best_candidate: Optional[ChromeControlCandidate] = None
+    best_candidate: ChromeControlCandidate | None = None
     candidates: list[ChromeControlCandidate] = field(default_factory=list)
     near_misses: list[ChromeControlCandidate] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -57,22 +57,14 @@ class ChromeControlResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChromeControlResult":
+    def from_dict(cls, data: dict[str, Any]) -> ChromeControlResult:
         candidates = [
-            ChromeControlCandidate.from_dict(candidate)
-            for candidate in data.get("candidates", [])
-            if isinstance(candidate, dict)
+            ChromeControlCandidate.from_dict(candidate) for candidate in data.get("candidates", []) if isinstance(candidate, dict)
         ]
         best = data.get("bestCandidate")
-        best_candidate = (
-            ChromeControlCandidate.from_dict(best)
-            if isinstance(best, dict)
-            else candidates[0] if candidates else None
-        )
+        best_candidate = ChromeControlCandidate.from_dict(best) if isinstance(best, dict) else candidates[0] if candidates else None
         near_misses = [
-            ChromeControlCandidate.from_dict(candidate)
-            for candidate in data.get("nearMisses", [])
-            if isinstance(candidate, dict)
+            ChromeControlCandidate.from_dict(candidate) for candidate in data.get("nearMisses", []) if isinstance(candidate, dict)
         ]
         return cls(
             ok=bool(data.get("ok")),
@@ -109,7 +101,7 @@ class ChromeSearchResultCandidate:
     actionable: bool = True
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChromeSearchResultCandidate":
+    def from_dict(cls, data: dict[str, Any]) -> ChromeSearchResultCandidate:
         return cls(
             id=str(data.get("id") or ""),
             selector=str(data.get("selector") or ""),
@@ -135,7 +127,7 @@ class ChromeSearchResult:
     query: str = ""
     url: str = ""
     error: str = ""
-    best_candidate: Optional[ChromeSearchResultCandidate] = None
+    best_candidate: ChromeSearchResultCandidate | None = None
     candidates: list[ChromeSearchResultCandidate] = field(default_factory=list)
     rejected: list[ChromeSearchResultCandidate] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -144,22 +136,14 @@ class ChromeSearchResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChromeSearchResult":
+    def from_dict(cls, data: dict[str, Any]) -> ChromeSearchResult:
         candidates = [
-            ChromeSearchResultCandidate.from_dict(candidate)
-            for candidate in data.get("candidates", [])
-            if isinstance(candidate, dict)
+            ChromeSearchResultCandidate.from_dict(candidate) for candidate in data.get("candidates", []) if isinstance(candidate, dict)
         ]
         best = data.get("bestCandidate")
-        best_candidate = (
-            ChromeSearchResultCandidate.from_dict(best)
-            if isinstance(best, dict)
-            else candidates[0] if candidates else None
-        )
+        best_candidate = ChromeSearchResultCandidate.from_dict(best) if isinstance(best, dict) else candidates[0] if candidates else None
         rejected = [
-            ChromeSearchResultCandidate.from_dict(candidate)
-            for candidate in data.get("rejected", [])
-            if isinstance(candidate, dict)
+            ChromeSearchResultCandidate.from_dict(candidate) for candidate in data.get("rejected", []) if isinstance(candidate, dict)
         ]
         return cls(
             ok=bool(data.get("ok")),

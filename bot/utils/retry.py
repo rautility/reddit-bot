@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,26 +23,26 @@ def retry_action(
         base_delay: Base delay in seconds (doubles each retry).
         exceptions: Tuple of exception types to catch and retry on.
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception: Optional[Exception] = None
+            last_exception: Exception | None = None
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
                     last_exception = e
                     if attempt < max_retries:
-                        delay = base_delay * (2 ** attempt)
+                        delay = base_delay * (2**attempt)
                         logger.warning(
-                            f"Action '{func.__name__}' failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
-                            f"Retrying in {delay:.1f}s..."
+                            f"Action '{func.__name__}' failed (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {delay:.1f}s..."
                         )
                         time.sleep(delay)
                     else:
-                        logger.error(
-                            f"Action '{func.__name__}' failed after {max_retries + 1} attempts: {e}"
-                        )
+                        logger.error(f"Action '{func.__name__}' failed after {max_retries + 1} attempts: {e}")
             raise last_exception  # type: ignore[misc]
+
         return wrapper
+
     return decorator

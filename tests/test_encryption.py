@@ -5,8 +5,9 @@ may not be available or functional in all environments.
 """
 
 import pytest
+from cryptography.fernet import InvalidToken
 
-from bot.utils.credentials import encrypt_file, decrypt_file
+from bot.utils.credentials import decrypt_file, encrypt_file
 
 
 class TestEncryption:
@@ -25,5 +26,5 @@ class TestEncryption:
         encrypted = tmp_path / "encrypted.bin"
 
         encrypt_file(str(plain), str(encrypted), "correctkey")
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidToken):
             decrypt_file(str(encrypted), "wrongkey")

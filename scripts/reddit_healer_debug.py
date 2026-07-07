@@ -11,12 +11,12 @@ from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
+
+from bot.actions.search import HumanSearchAction
+from bot.config import BotConfig
+from bot.reporting import setup_structured_logger
 from bot.utils.chrome_extension_bridge import ChromeExtensionBridge
 from bot.utils.chromedriver import install_chromedriver
-from bot.config import BotConfig
-from bot.actions.search import HumanSearchAction
-from bot.reporting import setup_structured_logger
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXTENSION_DIR = REPO_ROOT / "chrome_extension/reddit_healer"
@@ -71,10 +71,7 @@ def add_debug_profile_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--profile-name",
         default=DEFAULT_PROFILE_NAME,
-        help=(
-            "Saved Chrome profile name. Defaults to "
-            f"{DEFAULT_PROFILE_NAME!r}."
-        ),
+        help=(f"Saved Chrome profile name. Defaults to {DEFAULT_PROFILE_NAME!r}."),
     )
     parser.add_argument(
         "--profile-dir",

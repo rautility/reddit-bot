@@ -29,9 +29,7 @@ def test_selection_details_from_outcomes_extracts_attempts():
 
 def test_selection_details_from_outcomes_none_when_absent():
     assert tool_cli._selection_details_from_outcomes([]) is None
-    assert tool_cli._selection_details_from_outcomes(
-        [{"result": {"results": [{"link": "x"}]}}]
-    ) is None
+    assert tool_cli._selection_details_from_outcomes([{"result": {"results": [{"link": "x"}]}}]) is None
 
 
 def test_schedule_add_writes_action_file_and_registers_schedule(tmp_path, capsys):
@@ -79,9 +77,7 @@ def test_schedule_add_writes_action_file_and_registers_schedule(tmp_path, capsys
     metadata = json.loads(schedule["metadata_json"])
     links_path = actions_dir / f"{schedule['id']}.txt"
     assert metadata["linksPath"] == str(links_path)
-    assert links_path.read_text() == (
-        "https://www.reddit.com/r/test/comments/abc/title/|upvote\n"
-    )
+    assert links_path.read_text() == ("https://www.reddit.com/r/test/comments/abc/title/|upvote\n")
 
 
 def test_schedule_add_json_outputs_registered_payload(tmp_path, capsys):

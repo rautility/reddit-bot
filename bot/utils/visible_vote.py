@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-
 VoteIntent = Literal["upvote", "downvote"]
 
 
@@ -296,6 +295,6 @@ def click_visible_vote_control(
         "source": candidate.get("source"),
         "before": before,
         "after": after,
-        "confirmed": bool(((after.get("candidate") or {}).get("pressed"))),
+        "confirmed": bool((after.get("candidate") or {}).get("pressed")),
         "screenshotPath": screenshot or None,
     }

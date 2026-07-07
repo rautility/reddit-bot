@@ -13,8 +13,9 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
+
+from .base import ActionResult, BaseAction
 
 
 class HumanSearchAction(BaseAction):
@@ -79,10 +80,7 @@ class HumanSearchAction(BaseAction):
                     success=True,
                     action=self.name,
                     link=opened_url,
-                    message=(
-                        f"Opened {source} search result {index}/{total}: "
-                        f"{candidate.get('title') or opened_url}"
-                    ),
+                    message=(f"Opened {source} search result {index}/{total}: {candidate.get('title') or opened_url}"),
                 )
             if index < total:
                 Timeouts.med()
@@ -527,7 +525,9 @@ class HumanSearchAction(BaseAction):
               }
               if (ms === null) {
                 const text = String((card.textContent || '')).toLowerCase();
-                const m = text.match(/(\\d+)\\s*(yr|year|years|mo|month|months|wk|week|weeks|day|days|hr|hour|hours|min|minute|minutes)\\b/);
+                const m = text.match(
+                  /(\\d+)\\s*(yr|year|years|mo|month|months|wk|week|weeks|day|days|hr|hour|hours|min|minute|minutes)\\b/
+                );
                 if (!m) return null;
                 const n = parseInt(m[1], 10);
                 const unit = m[2];
@@ -578,12 +578,7 @@ class HumanSearchAction(BaseAction):
             if candidate.confidence < min_confidence:
                 continue
             state = candidate.state or {}
-            if (
-                state.get("promoted")
-                or state.get("archived")
-                or state.get("deleted")
-                or state.get("removed")
-            ):
+            if state.get("promoted") or state.get("archived") or state.get("deleted") or state.get("removed"):
                 continue
             key = candidate.url.rstrip("/").lower()
             if key in seen:
@@ -764,31 +759,29 @@ class SearchUpvoteAction(BaseAction):
 
             attempts_here = 0
             while True:
-                vote_result = VoteAction(self.driver, self.config, self.logger).execute(
-                    link=url, upvote=True
-                )
+                vote_result = VoteAction(self.driver, self.config, self.logger).execute(link=url, upvote=True)
                 attempts_here += 1
                 last_screenshot = vote_result.screenshot_path or last_screenshot
-                if (
-                    vote_result.success
-                    or self._is_definitive_failure(vote_result.message)
-                    or retry_budget <= 0
-                ):
+                if vote_result.success or self._is_definitive_failure(vote_result.message) or retry_budget <= 0:
                     break
                 # Transient failure and budget available: retry the same post.
                 retry_budget -= 1
-                self.logger.info(
-                    f"search_upvote candidate {index}/{total} transient failure, "
-                    f"retrying same post: {vote_result.message}"
-                )
+                self.logger.info(f"search_upvote candidate {index}/{total} transient failure, retrying same post: {vote_result.message}")
                 Timeouts.med()
 
             if vote_result.success:
-                attempts.append({
-                    "index": index, "url": url, "title": title, "ageDays": age_days,
-                    "outcome": "upvoted", "reason": None, "voteAttempts": attempts_here,
-                    "message": vote_result.message,
-                })
+                attempts.append(
+                    {
+                        "index": index,
+                        "url": url,
+                        "title": title,
+                        "ageDays": age_days,
+                        "outcome": "upvoted",
+                        "reason": None,
+                        "voteAttempts": attempts_here,
+                        "message": vote_result.message,
+                    }
+                )
                 skipped = [f"[{a['index']}] {a['reason']}" for a in attempts if a["outcome"] == "skipped"]
                 retry_note = f" (retried {attempts_here - 1}x)" if attempts_here > 1 else ""
                 skip_note = f" after skipping {', '.join(skipped)}" if skipped else ""
@@ -796,10 +789,7 @@ class SearchUpvoteAction(BaseAction):
                     success=True,
                     action=self.name,
                     link=url,
-                    message=(
-                        f"Upvoted {source} search result {index}/{total} "
-                        f"({title}); {vote_result.message}{retry_note}{skip_note}"
-                    ),
+                    message=(f"Upvoted {source} search result {index}/{total} ({title}); {vote_result.message}{retry_note}{skip_note}"),
                     screenshot_path=vote_result.screenshot_path,
                     details=self._build_details(search_query, subreddit, total, attempts, url),
                 )
@@ -810,11 +800,18 @@ class SearchUpvoteAction(BaseAction):
                 f"search_upvote candidate {index}/{total} {kind} skip "
                 f"(age_days={age_days}, attempts={attempts_here}, {url}): {vote_result.message}"
             )
-            attempts.append({
-                "index": index, "url": url, "title": title, "ageDays": age_days,
-                "outcome": "skipped", "reason": reason, "voteAttempts": attempts_here,
-                "message": vote_result.message,
-            })
+            attempts.append(
+                {
+                    "index": index,
+                    "url": url,
+                    "title": title,
+                    "ageDays": age_days,
+                    "outcome": "skipped",
+                    "reason": reason,
+                    "voteAttempts": attempts_here,
+                    "message": vote_result.message,
+                }
+            )
             if index < total:
                 Timeouts.med()
 
@@ -825,8 +822,7 @@ class SearchUpvoteAction(BaseAction):
             action=self.name,
             link=(candidates[0].get("url") or search_query),
             message=(
-                f"Upvote failed after trying {len(attempts_detail)} search result(s) "
-                f"[{'; '.join(skipped)}]: " + " | ".join(attempts_detail)
+                f"Upvote failed after trying {len(attempts_detail)} search result(s) [{'; '.join(skipped)}]: " + " | ".join(attempts_detail)
             ),
             screenshot_path=last_screenshot,
             details=self._build_details(search_query, subreddit, total, attempts, None),

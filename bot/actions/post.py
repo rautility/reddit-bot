@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.by import By
 
-from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
+
+from .base import ActionResult, BaseAction
 
 
 class PostTextAction(BaseAction):
@@ -48,7 +49,10 @@ class PostTextAction(BaseAction):
             # Title
             title_field = self._find_with_fallbacks(
                 (By.CSS_SELECTOR, "textarea[placeholder*='Title'], textarea[name='title']"),
-                (By.XPATH, "//textarea[contains(@placeholder, 'title') or contains(@placeholder, 'Title')]"),
+                (
+                    By.XPATH,
+                    "//textarea[contains(@placeholder, 'title') or contains(@placeholder, 'Title')]",
+                ),
             )
             self._type_like_human(title_field, title)
             Timeouts.srt()
@@ -75,7 +79,12 @@ class PostTextAction(BaseAction):
             self._click(submit_btn)
             Timeouts.lng()
 
-            return ActionResult(success=True, action="post_text", link=target, message=f"Text post '{title}' created")
+            return ActionResult(
+                success=True,
+                action="post_text",
+                link=target,
+                message=f"Text post '{title}' created",
+            )
         except NoSuchElementException as e:
             return ActionResult(success=False, action="post_text", link=target, message=str(e))
 
@@ -88,9 +97,7 @@ class PostTextAction(BaseAction):
             self._click(flair_btn)
             Timeouts.srt()
 
-            flair_option = self.driver.find_element(
-                By.XPATH, f"//div[contains(text(), '{flair}')]"
-            )
+            flair_option = self.driver.find_element(By.XPATH, f"//div[contains(text(), '{flair}')]")
             self._click(flair_option)
             Timeouts.srt()
 
@@ -123,7 +130,12 @@ class PostLinkAction(BaseAction):
             return ActionResult(success=True, action="post_link", link=target, message=f"Dry run: '{title}'")
 
         if not title or not body:
-            return ActionResult(success=False, action="post_link", link=target, message="Title and URL (body) required")
+            return ActionResult(
+                success=False,
+                action="post_link",
+                link=target,
+                message="Title and URL (body) required",
+            )
 
         submit_url = f"https://www.reddit.com/r/{subreddit}/submit" if subreddit else f"{link.rstrip('/')}/submit"
         self._navigate(submit_url)
@@ -139,14 +151,23 @@ class PostLinkAction(BaseAction):
 
             title_field = self._find_with_fallbacks(
                 (By.CSS_SELECTOR, "textarea[placeholder*='Title'], textarea[name='title']"),
-                (By.XPATH, "//textarea[contains(@placeholder, 'title') or contains(@placeholder, 'Title')]"),
+                (
+                    By.XPATH,
+                    "//textarea[contains(@placeholder, 'title') or contains(@placeholder, 'Title')]",
+                ),
             )
             self._type_like_human(title_field, title)
             Timeouts.srt()
 
             url_field = self._find_with_fallbacks(
-                (By.CSS_SELECTOR, "input[placeholder*='Url'], input[name='url'], textarea[placeholder*='Url']"),
-                (By.XPATH, "//input[contains(@placeholder, 'url') or contains(@placeholder, 'Url')]"),
+                (
+                    By.CSS_SELECTOR,
+                    "input[placeholder*='Url'], input[name='url'], textarea[placeholder*='Url']",
+                ),
+                (
+                    By.XPATH,
+                    "//input[contains(@placeholder, 'url') or contains(@placeholder, 'Url')]",
+                ),
             )
             self._type_like_human(url_field, body)
             Timeouts.srt()
@@ -158,7 +179,12 @@ class PostLinkAction(BaseAction):
             self._click(submit_btn)
             Timeouts.lng()
 
-            return ActionResult(success=True, action="post_link", link=target, message=f"Link post '{title}' created")
+            return ActionResult(
+                success=True,
+                action="post_link",
+                link=target,
+                message=f"Link post '{title}' created",
+            )
         except NoSuchElementException as e:
             return ActionResult(success=False, action="post_link", link=target, message=str(e))
 
@@ -182,7 +208,12 @@ class PostImageAction(BaseAction):
             return ActionResult(success=True, action="post_image", link=target, message=f"Dry run: '{title}'")
 
         if not title or not body:
-            return ActionResult(success=False, action="post_image", link=target, message="Title and image path (body) required")
+            return ActionResult(
+                success=False,
+                action="post_image",
+                link=target,
+                message="Title and image path (body) required",
+            )
 
         submit_url = f"https://www.reddit.com/r/{subreddit}/submit" if subreddit else f"{link.rstrip('/')}/submit"
         self._navigate(submit_url)
@@ -198,7 +229,10 @@ class PostImageAction(BaseAction):
 
             title_field = self._find_with_fallbacks(
                 (By.CSS_SELECTOR, "textarea[placeholder*='Title'], textarea[name='title']"),
-                (By.XPATH, "//textarea[contains(@placeholder, 'title') or contains(@placeholder, 'Title')]"),
+                (
+                    By.XPATH,
+                    "//textarea[contains(@placeholder, 'title') or contains(@placeholder, 'Title')]",
+                ),
             )
             self._type_like_human(title_field, title)
             Timeouts.srt()
@@ -215,7 +249,12 @@ class PostImageAction(BaseAction):
             self._click(submit_btn)
             Timeouts.lng()
 
-            return ActionResult(success=True, action="post_image", link=target, message=f"Image post '{title}' created")
+            return ActionResult(
+                success=True,
+                action="post_image",
+                link=target,
+                message=f"Image post '{title}' created",
+            )
         except NoSuchElementException as e:
             return ActionResult(success=False, action="post_image", link=target, message=str(e))
 
@@ -233,7 +272,12 @@ class CrosspostAction(BaseAction):
         self.logger.info(f"Crossposting {link} to r/{subreddit}")
 
         if self.config.dry_run:
-            return ActionResult(success=True, action="crosspost", link=link, message=f"Dry run: crosspost to r/{subreddit}")
+            return ActionResult(
+                success=True,
+                action="crosspost",
+                link=link,
+                message=f"Dry run: crosspost to r/{subreddit}",
+            )
 
         if not subreddit:
             return ActionResult(success=False, action="crosspost", link=link, message="Target subreddit required")
@@ -266,16 +310,12 @@ class CrosspostAction(BaseAction):
             Timeouts.med()
 
             # Select from dropdown
-            sub_option = self.driver.find_element(
-                By.XPATH, f"//div[contains(text(), 'r/{subreddit}')]"
-            )
+            sub_option = self.driver.find_element(By.XPATH, f"//div[contains(text(), 'r/{subreddit}')]")
             self._click(sub_option)
             Timeouts.srt()
 
             if title:
-                title_field = self.driver.find_element(
-                    By.CSS_SELECTOR, "textarea[placeholder*='Title'], textarea[name='title']"
-                )
+                title_field = self.driver.find_element(By.CSS_SELECTOR, "textarea[placeholder*='Title'], textarea[name='title']")
                 title_field.clear()
                 self._type_like_human(title_field, title)
 

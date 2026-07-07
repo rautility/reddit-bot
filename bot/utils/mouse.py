@@ -7,12 +7,12 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from selenium.webdriver.remote.webelement import WebElement
     from selenium.webdriver.remote.webdriver import WebDriver
+    from selenium.webdriver.remote.webelement import WebElement
 
 try:
-    import numpy as np
     import bezier
+    import numpy as np
 
     def _bezier_curve_points(
         start: tuple[int, int],
@@ -30,10 +30,13 @@ try:
             start[1] + random.randint(-50, 50) + 2 * (end[1] - start[1]) // 3,
         )
 
-        nodes = np.asfortranarray([
-            [start[0], ctrl1[0], ctrl2[0], end[0]],
-            [start[1], ctrl1[1], ctrl2[1], end[1]],
-        ], dtype=float)
+        nodes = np.asfortranarray(
+            [
+                [start[0], ctrl1[0], ctrl2[0], end[0]],
+                [start[1], ctrl1[1], ctrl2[1], end[1]],
+            ],
+            dtype=float,
+        )
         curve = bezier.Curve(nodes, degree=3)
 
         t_values = np.linspace(0.0, 1.0, num_points)
@@ -46,8 +49,8 @@ except ImportError:
 
 
 def click_target_diagnostics(
-    driver: "WebDriver",
-    element: "WebElement",
+    driver: WebDriver,
+    element: WebElement,
     *,
     scroll: bool = True,
 ) -> dict:
@@ -202,7 +205,7 @@ def click_target_diagnostics(
     )
 
 
-def _element_view_metrics(driver: "WebDriver", element: "WebElement") -> dict:
+def _element_view_metrics(driver: WebDriver, element: WebElement) -> dict:
     return driver.execute_script(
         """
         const element = arguments[0];
@@ -227,12 +230,12 @@ def _element_view_metrics(driver: "WebDriver", element: "WebElement") -> dict:
     )
 
 
-def _wheel_scroll(driver: "WebDriver", y_amount: int, pause_seconds: float) -> None:
+def _wheel_scroll(driver: WebDriver, y_amount: int, pause_seconds: float) -> None:
     driver.execute_script("window.scrollBy({top: arguments[0], behavior: 'auto'});", y_amount)
     time.sleep(pause_seconds)
 
 
-def _scroll_position(driver: "WebDriver") -> dict:
+def _scroll_position(driver: WebDriver) -> dict:
     return driver.execute_script(
         """
         return {
@@ -259,7 +262,7 @@ def _clamp_point_to_viewport(
     )
 
 
-def _element_viewport_center(driver: "WebDriver", element: "WebElement") -> tuple[int, int]:
+def _element_viewport_center(driver: WebDriver, element: WebElement) -> tuple[int, int]:
     center = driver.execute_script(
         """
         const rect = arguments[0].getBoundingClientRect();
@@ -273,15 +276,15 @@ def _element_viewport_center(driver: "WebDriver", element: "WebElement") -> tupl
     return int(center["x"]), int(center["y"])
 
 
-def _uses_attached_chrome_debugger(driver: "WebDriver") -> bool:
+def _uses_attached_chrome_debugger(driver: WebDriver) -> bool:
     capabilities = getattr(driver, "capabilities", {}) or {}
     chrome_options = capabilities.get("goog:chromeOptions", {}) or {}
     return bool(chrome_options.get("debuggerAddress"))
 
 
 def _dom_mouse_path_click(
-    driver: "WebDriver",
-    element: "WebElement",
+    driver: WebDriver,
+    element: WebElement,
     points: list[tuple[int, int]],
 ) -> None:
     driver.execute_script(
@@ -334,8 +337,8 @@ def _dom_mouse_path_click(
 
 
 def human_scroll_to_element(
-    driver: "WebDriver",
-    element: "WebElement",
+    driver: WebDriver,
+    element: WebElement,
     *,
     max_steps: int = 16,
 ) -> list[dict]:
@@ -366,7 +369,7 @@ def human_scroll_to_element(
     return history
 
 
-def human_reading_scroll(driver: "WebDriver") -> list[int]:
+def human_reading_scroll(driver: WebDriver) -> list[int]:
     """Skim a little below the current view, then drift back before targeting."""
     start = _scroll_position(driver)
     viewport_h = int(start.get("viewportHeight") or 0)
@@ -401,13 +404,13 @@ def human_reading_scroll(driver: "WebDriver") -> list[int]:
     return movements
 
 
-def _pointer_click(driver: "WebDriver", element: "WebElement", pause_seconds: float) -> None:
+def _pointer_click(driver: WebDriver, element: WebElement, pause_seconds: float) -> None:
     from selenium.webdriver.common.action_chains import ActionChains
 
     ActionChains(driver).move_to_element(element).pause(pause_seconds).click().perform()
 
 
-def human_click(driver: "WebDriver", element: "WebElement", enabled: bool = True) -> dict:
+def human_click(driver: WebDriver, element: WebElement, enabled: bool = True) -> dict:
     """Click an element through WebDriver pointer actions and return hit-test diagnostics."""
     if enabled:
         human_reading_scroll(driver)

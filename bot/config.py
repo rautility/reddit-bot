@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -13,7 +12,7 @@ import yaml
 @dataclass
 class ProxyConfig:
     enabled: bool = False
-    proxy_list_path: Optional[str] = None
+    proxy_list_path: str | None = None
     rotate_per_account: bool = True
 
 
@@ -29,7 +28,7 @@ class RateLimitConfig:
 @dataclass
 class WebhookConfig:
     enabled: bool = False
-    url: Optional[str] = None
+    url: str | None = None
     on_completion: bool = True
     on_failure: bool = True
 
@@ -37,8 +36,8 @@ class WebhookConfig:
 @dataclass
 class BotConfig:
     # Input files
-    accounts_path: Optional[str] = None
-    links_path: Optional[str] = None
+    accounts_path: str | None = None
+    links_path: str | None = None
 
     # Modes
     verbose: bool = False
@@ -52,14 +51,14 @@ class BotConfig:
     human_mouse: bool = False
     manual_login: bool = True
     use_existing_chrome: bool = False
-    chrome_user_data_dir: Optional[str] = None
-    chrome_profile_name: Optional[str] = None
-    chrome_debugging_address: Optional[str] = None
+    chrome_user_data_dir: str | None = None
+    chrome_profile_name: str | None = None
+    chrome_debugging_address: str | None = None
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
     # Orchestration
     parallel_accounts: int = 1
-    schedule_cron: Optional[str] = None
+    schedule_cron: str | None = None
     session_persistence: bool = False
     session_dir: str = ".sessions"
 
@@ -105,33 +104,55 @@ class BotConfig:
     search_upvote_transient_retries: int = 1
 
     @classmethod
-    def from_yaml(cls, path: str) -> "BotConfig":
+    def from_yaml(cls, path: str) -> BotConfig:
         """Load config from a YAML file."""
-        with open(path, "r") as f:
+        with open(path) as f:
             data = yaml.safe_load(f) or {}
         return cls._from_dict(data)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BotConfig":
+    def from_dict(cls, data: dict[str, Any]) -> BotConfig:
         """Load config from a dictionary."""
         return cls._from_dict(data)
 
     @classmethod
-    def _from_dict(cls, data: dict[str, Any]) -> "BotConfig":
+    def _from_dict(cls, data: dict[str, Any]) -> BotConfig:
         config = cls()
         simple_fields = {
-            "accounts_path", "links_path", "verbose", "headless", "dry_run",
-            "rotate_user_agent", "randomize_actions", "human_mouse",
-            "manual_login", "use_existing_chrome", "chrome_user_data_dir",
-            "chrome_profile_name", "chrome_debugging_address",
-            "parallel_accounts", "schedule_cron", "session_persistence",
-            "session_dir", "db_path", "log_dir", "log_file", "encrypt_credentials",
-            "credentials_key_env", "screenshot_on_failure", "screenshot_dir",
-            "selector_cache_path", "selector_diagnostics_dir",
-            "selector_fallback_wait", "selenium_implicit_wait",
-            "chrome_extension_healer_enabled", "chrome_extension_path",
-            "chrome_extension_bridge_timeout_ms", "chrome_extension_min_confidence",
-            "search_upvote_max_candidates", "search_upvote_recent_days",
+            "accounts_path",
+            "links_path",
+            "verbose",
+            "headless",
+            "dry_run",
+            "rotate_user_agent",
+            "randomize_actions",
+            "human_mouse",
+            "manual_login",
+            "use_existing_chrome",
+            "chrome_user_data_dir",
+            "chrome_profile_name",
+            "chrome_debugging_address",
+            "parallel_accounts",
+            "schedule_cron",
+            "session_persistence",
+            "session_dir",
+            "db_path",
+            "log_dir",
+            "log_file",
+            "encrypt_credentials",
+            "credentials_key_env",
+            "screenshot_on_failure",
+            "screenshot_dir",
+            "selector_cache_path",
+            "selector_diagnostics_dir",
+            "selector_fallback_wait",
+            "selenium_implicit_wait",
+            "chrome_extension_healer_enabled",
+            "chrome_extension_path",
+            "chrome_extension_bridge_timeout_ms",
+            "chrome_extension_min_confidence",
+            "search_upvote_max_candidates",
+            "search_upvote_recent_days",
             "search_upvote_transient_retries",
         }
         for key in simple_fields:

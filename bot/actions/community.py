@@ -5,11 +5,12 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.by import By
 
-from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
+
+from .base import ActionResult, BaseAction
 
 
 class JoinCommunityAction(BaseAction):
@@ -28,8 +29,14 @@ class JoinCommunityAction(BaseAction):
 
         legacy_locators = (
             (By.CSS_SELECTOR, "button[id*='join-button']"),
-            (By.XPATH, "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button"),
-            (By.XPATH, '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button'),
+            (
+                By.XPATH,
+                "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button",
+            ),
+            (
+                By.XPATH,
+                '//*[@id="AppRouter-main-content"]/div/div/div[2]/div[1]/div/div[1]/div/div[2]/div/button',
+            ),
         )
         join_button = self._find_self_healing(
             action_name,
@@ -44,28 +51,29 @@ class JoinCommunityAction(BaseAction):
                 message="Could not find community join/leave button",
             )
 
-        button_text = (
-            join_button.text
-            or join_button.get_attribute("aria-label")
-            or ""
-        ).lower()
+        button_text = (join_button.text or join_button.get_attribute("aria-label") or "").lower()
 
         if (join and "join" in button_text and "joined" not in button_text) or (
             not join and ("joined" in button_text or "leave" in button_text)
         ):
             self._click(join_button)
             Timeouts.med()
-            return ActionResult(success=True, action=action_name, link=link, message=f"Successfully {'joined' if join else 'left'}")
+            return ActionResult(
+                success=True,
+                action=action_name,
+                link=link,
+                message=f"Successfully {'joined' if join else 'left'}",
+            )
 
         return ActionResult(
-            success=True, action=action_name, link=link,
-            message=f"Already {'joined' if join else 'left'} (button says '{button_text}')"
+            success=True,
+            action=action_name,
+            link=link,
+            message=f"Already {'joined' if join else 'left'} (button says '{button_text}')",
         )
 
     def _handle_nsfw(self) -> None:
         with contextlib.suppress(NoSuchElementException):
-            btn = self.driver.find_element(
-                By.CSS_SELECTOR, "button.nsfw-gate-btn, button[name='over18']"
-            )
+            btn = self.driver.find_element(By.CSS_SELECTOR, "button.nsfw-gate-btn, button[name='over18']")
             btn.click()
             Timeouts.srt()

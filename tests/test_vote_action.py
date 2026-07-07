@@ -224,7 +224,7 @@ def test_vote_action_uses_extension_bridge_candidate(mocker):
     candidate = ChromeControlCandidate(
         id="control-1",
         intent="downvote",
-        selector="button[aria-label=\"Downvote\"]",
+        selector='button[aria-label="Downvote"]',
         confidence=0.93,
     )
     bridge = mocker.Mock()
@@ -267,7 +267,7 @@ def test_vote_action_falls_back_when_extension_confidence_is_low(mocker):
     candidate = ChromeControlCandidate(
         id="control-1",
         intent="upvote",
-        selector="button[aria-label=\"Upvote\"]",
+        selector='button[aria-label="Upvote"]',
         confidence=0.4,
     )
     bridge = mocker.Mock()
@@ -294,7 +294,7 @@ def test_vote_action_stops_when_extension_candidate_is_disabled(mocker):
     candidate = ChromeControlCandidate(
         id="control-1",
         intent="upvote",
-        selector="button[data-action-bar-action=\"upvote\"]",
+        selector='button[data-action-bar-action="upvote"]',
         confidence=1.0,
         state={"disabled": True, "pressed": False},
         actionable=False,

@@ -1,9 +1,10 @@
 """Tests for human-like Reddit search action helpers."""
 
+from selenium.common.exceptions import WebDriverException
+
 from bot.actions.base import ActionResult
 from bot.actions.search import HumanSearchAction, SearchUpvoteAction
 from bot.config import BotConfig
-from selenium.common.exceptions import WebDriverException
 
 
 def test_find_search_box_uses_deep_shadow_dom_fallback(mocker):
@@ -49,7 +50,7 @@ def test_type_search_query_focuses_nested_input_and_types_with_actions(mocker):
     action._type_search_query_like_human(element, "ab cd")
 
     scripts = [call.args[0] for call in driver.execute_script.call_args_list]
-    assert any("input[name=\"q\"]" in script for script in scripts)
+    assert any('input[name="q"]' in script for script in scripts)
     assert any("data-reddit-bot-search-overlay" in script for script in scripts)
     assert driver.execute_script.call_args_list[0].args[1] is element
     assert target.send_keys.call_count >= 6
@@ -75,10 +76,18 @@ def test_human_search_opens_top_ranked_candidate(mocker):
     config = BotConfig()
     action = HumanSearchAction(driver, config)
     top = "https://www.reddit.com/r/x/comments/a/one/"
-    mocker.patch.object(action, "collect_candidates", return_value=[
-        {"url": top, "title": "one", "source": "extension"},
-        {"url": "https://www.reddit.com/r/x/comments/b/two/", "title": "two", "source": "extension"},
-    ])
+    mocker.patch.object(
+        action,
+        "collect_candidates",
+        return_value=[
+            {"url": top, "title": "one", "source": "extension"},
+            {
+                "url": "https://www.reddit.com/r/x/comments/b/two/",
+                "title": "two",
+                "source": "extension",
+            },
+        ],
+    )
     open_mock = mocker.patch.object(action, "_open_ranked_candidate", return_value=top)
 
     result = action.execute(query="excel forms", subreddit="excel")
@@ -86,17 +95,23 @@ def test_human_search_opens_top_ranked_candidate(mocker):
     assert result.success is True
     assert result.link == top
     assert "1/2" in result.message
-    action.collect_candidates.assert_called_once_with(
-        "excel forms", subreddit="excel", limit=config.search_upvote_max_candidates
-    )
+    action.collect_candidates.assert_called_once_with("excel forms", subreddit="excel", limit=config.search_upvote_max_candidates)
     assert open_mock.call_count == 1
 
 
 def test_human_search_falls_through_when_open_fails(mocker):
     driver = mocker.Mock()
     action = HumanSearchAction(driver, BotConfig())
-    c1 = {"url": "https://www.reddit.com/r/x/comments/a/one/", "title": "one", "source": "extension"}
-    c2 = {"url": "https://www.reddit.com/r/x/comments/b/two/", "title": "two", "source": "extension"}
+    c1 = {
+        "url": "https://www.reddit.com/r/x/comments/a/one/",
+        "title": "one",
+        "source": "extension",
+    }
+    c2 = {
+        "url": "https://www.reddit.com/r/x/comments/b/two/",
+        "title": "two",
+        "source": "extension",
+    }
     mocker.patch.object(action, "collect_candidates", return_value=[c1, c2])
     mocker.patch("bot.actions.search.Timeouts.med")
     mocker.patch.object(action, "_open_ranked_candidate", side_effect=[None, c2["url"]])
@@ -195,7 +210,10 @@ def test_search_upvote_passes_subreddit_scope(mocker):
     ]
     vote_cls = mocker.patch("bot.actions.vote.VoteAction")
     vote_cls.return_value.execute.return_value = ActionResult(
-        success=True, action="upvote", link=selected_url, message="Vote registered",
+        success=True,
+        action="upvote",
+        link=selected_url,
+        message="Vote registered",
     )
 
     SearchUpvoteAction(driver, config).execute(link="excel forms", subreddit="excel")
@@ -211,13 +229,25 @@ def test_augment_and_rank_moves_old_posts_last(mocker):
     driver = mocker.Mock()
     driver.execute_script.return_value = {
         "/r/x/comments/aaa/one": 1000,  # old -> to the back
-        "/r/x/comments/bbb/two": 10,    # recent
+        "/r/x/comments/bbb/two": 10,  # recent
     }
     action = HumanSearchAction(driver, BotConfig())
     candidates = [
-        {"url": "https://www.reddit.com/r/x/comments/aaa/one/", "confidence": 0.9, "source": "extension"},
-        {"url": "https://www.reddit.com/r/x/comments/bbb/two/", "confidence": 0.8, "source": "extension"},
-        {"url": "https://www.reddit.com/r/x/comments/ccc/three/", "confidence": 0.7, "source": "extension"},
+        {
+            "url": "https://www.reddit.com/r/x/comments/aaa/one/",
+            "confidence": 0.9,
+            "source": "extension",
+        },
+        {
+            "url": "https://www.reddit.com/r/x/comments/bbb/two/",
+            "confidence": 0.8,
+            "source": "extension",
+        },
+        {
+            "url": "https://www.reddit.com/r/x/comments/ccc/three/",
+            "confidence": 0.7,
+            "source": "extension",
+        },
     ]
 
     ranked = action._augment_and_rank(candidates)

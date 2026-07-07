@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.by import By
 
-from .base import BaseAction, ActionResult
 from bot.utils.timeouts import Timeouts
+
+from .base import ActionResult, BaseAction
 
 
 class UpdateBioAction(BaseAction):
@@ -18,7 +19,12 @@ class UpdateBioAction(BaseAction):
         self.logger.info("Updating profile bio")
 
         if self.config.dry_run:
-            return ActionResult(success=True, action="update_bio", link="profile", message=f"Dry run: bio='{body[:50]}'")
+            return ActionResult(
+                success=True,
+                action="update_bio",
+                link="profile",
+                message=f"Dry run: bio='{body[:50]}'",
+            )
 
         if not body:
             return ActionResult(success=False, action="update_bio", link="profile", message="No bio text provided")
@@ -30,7 +36,10 @@ class UpdateBioAction(BaseAction):
             # Find the bio/about textarea
             bio_field = self._find_with_fallbacks(
                 (By.CSS_SELECTOR, "textarea[name='about'], textarea[id*='about']"),
-                (By.XPATH, "//textarea[contains(@placeholder, 'About') or contains(@placeholder, 'bio')]"),
+                (
+                    By.XPATH,
+                    "//textarea[contains(@placeholder, 'About') or contains(@placeholder, 'bio')]",
+                ),
                 (By.CSS_SELECTOR, "textarea"),
             )
             bio_field.clear()
