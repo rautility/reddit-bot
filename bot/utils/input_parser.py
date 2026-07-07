@@ -30,6 +30,8 @@ VALID_ACTIONS = {
     "dm",
     "follow", "unfollow",
     "update_bio",
+    "human_search",
+    "search_upvote",
 }
 
 

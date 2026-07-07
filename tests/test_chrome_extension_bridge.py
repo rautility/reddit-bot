@@ -6,6 +6,8 @@ from bot.utils.chrome_extension_bridge import (
     ChromeControlCandidate,
     ChromeControlResult,
     ChromeExtensionBridge,
+    ChromeSearchResultCandidate,
+    ChromeSearchResult,
 )
 
 
@@ -86,6 +88,78 @@ def test_bridge_find_control_sends_structured_request(mocker):
     assert call.args[2]["postUrl"] == "https://www.reddit.com/r/test/comments/abc/title"
     assert call.args[2]["minConfidence"] == 0.8
     assert call.args[3] == 1234
+
+
+def test_search_result_candidate_from_dict_normalizes_fields():
+    candidate = ChromeSearchResultCandidate.from_dict(
+        {
+            "id": "result-1",
+            "selector": "a[href*='/comments/abc']",
+            "url": "https://www.reddit.com/r/test/comments/abc/title/",
+            "title": "Useful post",
+            "subreddit": "r/test",
+            "author": "u/person",
+            "confidence": 0.88,
+            "state": {"promoted": False, "archived": False},
+            "evidence": ["comments permalink"],
+            "actionable": True,
+        }
+    )
+
+    assert candidate.id == "result-1"
+    assert candidate.url.endswith("/comments/abc/title/")
+    assert candidate.title == "Useful post"
+    assert candidate.subreddit == "r/test"
+    assert candidate.state["archived"] is False
+    assert candidate.actionable is True
+
+
+def test_search_result_uses_best_candidate_from_response():
+    result = ChromeSearchResult.from_dict(
+        {
+            "ok": True,
+            "query": "selenium reddit",
+            "bestCandidate": {"id": "best", "confidence": 0.95},
+            "candidates": [{"id": "other", "confidence": 0.7}],
+            "rejected": [{"id": "ad", "state": {"promoted": True}}],
+            "pageShape": {"shredditPosts": 3},
+            "meetsMinConfidence": True,
+        }
+    )
+
+    assert result.ok is True
+    assert result.query == "selenium reddit"
+    assert result.best_candidate.id == "best"
+    assert result.candidates[0].id == "other"
+    assert result.rejected[0].state["promoted"] is True
+    assert result.page_shape["shredditPosts"] == 3
+    assert result.meets_min_confidence is True
+
+
+def test_bridge_find_search_result_sends_structured_request(mocker):
+    driver = mocker.Mock()
+    driver.execute_async_script.return_value = {
+        "ok": True,
+        "query": "python",
+        "bestCandidate": {
+            "id": "result-1",
+            "selector": "a[href*='/comments/abc']",
+            "confidence": 0.93,
+        },
+        "candidates": [],
+    }
+    bridge = ChromeExtensionBridge(driver, timeout_ms=4321)
+
+    result = bridge.find_search_result("python", min_confidence=0.7, max_results=12)
+
+    assert result.ok is True
+    assert result.best_candidate.selector == "a[href*='/comments/abc']"
+    call = driver.execute_async_script.call_args
+    assert call.args[1] == "find_search_result"
+    assert call.args[2]["query"] == "python"
+    assert call.args[2]["minConfidence"] == 0.7
+    assert call.args[2]["maxResults"] == 12
+    assert call.args[3] == 4321
 
 
 def test_bridge_returns_error_when_execute_async_script_fails(mocker):

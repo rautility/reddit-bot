@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -82,26 +83,109 @@ class ExecutionSummary:
         }
 
 
-def setup_structured_logger(name: str, level: int = logging.INFO, json_output: bool = False) -> logging.Logger:
-    """Set up a logger with optional JSON output."""
+MANAGED_HANDLER_ATTR = "_reddit_bot_managed_handler"
+MANAGED_HANDLER_KIND_ATTR = "_reddit_bot_handler_kind"
+MANAGED_HANDLER_PATH_ATTR = "_reddit_bot_handler_path"
+
+
+def resolve_log_path(log_dir: str | Path = "logs", log_file: str = "reddit-bot.log") -> Path:
+    """Return the file path used for durable bot logs."""
+    return Path(log_dir).expanduser() / log_file
+
+
+def setup_structured_logger(
+    name: str,
+    level: int = logging.INFO,
+    json_output: bool = False,
+    *,
+    log_dir: str | Path | None = None,
+    log_file: str = "reddit-bot.log",
+    console: bool = True,
+    file_level: int = logging.INFO,
+) -> logging.Logger:
+    """Set up a logger with optional console output and durable JSON file logs."""
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(min(level, file_level))
+    logger.propagate = False
 
-    handler = logging.StreamHandler()
+    log_path = resolve_log_path(log_dir, log_file) if log_dir else None
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if json_output:
+    _drop_stale_managed_handlers(logger, log_path=log_path, console=console)
+
+    if console and not _has_managed_handler(logger, "console"):
+        handler = logging.StreamHandler()
+
+        if json_output:
+            handler.setFormatter(JsonFormatter())
+        else:
+            formatter = logging.Formatter(
+                "\033[93m[%(levelname)s]\033[0m %(asctime)s \033[95m%(message)s\033[0m"
+            )
+            handler.setFormatter(formatter)
+        handler.setLevel(level)
+        _mark_managed_handler(handler, "console")
+        logger.addHandler(handler)
+
+    if log_path and not _has_managed_handler(logger, "file", path=log_path):
+        handler = logging.FileHandler(log_path, encoding="utf-8")
         handler.setFormatter(JsonFormatter())
-    else:
-        formatter = logging.Formatter(
-            "\033[93m[%(levelname)s]\033[0m %(asctime)s \033[95m%(message)s\033[0m"
-        )
-        handler.setFormatter(formatter)
-
-    # Avoid duplicate handlers on repeated calls
-    if not logger.handlers:
+        handler.setLevel(file_level)
+        _mark_managed_handler(handler, "file", path=log_path)
         logger.addHandler(handler)
 
     return logger
+
+
+def _mark_managed_handler(
+    handler: logging.Handler,
+    kind: str,
+    path: Optional[Path] = None,
+) -> None:
+    setattr(handler, MANAGED_HANDLER_ATTR, True)
+    setattr(handler, MANAGED_HANDLER_KIND_ATTR, kind)
+    if path:
+        setattr(handler, MANAGED_HANDLER_PATH_ATTR, str(path))
+
+
+def _has_managed_handler(
+    logger: logging.Logger,
+    kind: str,
+    path: Optional[Path] = None,
+) -> bool:
+    expected_path = str(path) if path else None
+    for handler in logger.handlers:
+        if getattr(handler, MANAGED_HANDLER_KIND_ATTR, None) != kind:
+            continue
+        if expected_path and getattr(handler, MANAGED_HANDLER_PATH_ATTR, None) != expected_path:
+            continue
+        return True
+    return False
+
+
+def _drop_stale_managed_handlers(
+    logger: logging.Logger,
+    *,
+    log_path: Optional[Path],
+    console: bool,
+) -> None:
+    expected_path = str(log_path) if log_path else None
+    for handler in list(logger.handlers):
+        if not getattr(handler, MANAGED_HANDLER_ATTR, False):
+            continue
+
+        kind = getattr(handler, MANAGED_HANDLER_KIND_ATTR, None)
+        handler_path = getattr(handler, MANAGED_HANDLER_PATH_ATTR, None)
+        should_remove = (
+            (kind == "console" and not console)
+            or (kind == "file" and handler_path != expected_path)
+        )
+        if not should_remove:
+            continue
+
+        logger.removeHandler(handler)
+        handler.close()
 
 
 class JsonFormatter(logging.Formatter):
@@ -116,6 +200,11 @@ class JsonFormatter(logging.Formatter):
         }
         if record.exc_info and record.exc_info[1]:
             log_entry["exception"] = str(record.exc_info[1])
+            log_entry["exception_type"] = record.exc_info[0].__name__
+            log_entry["traceback"] = self.formatException(record.exc_info)
+        log_entry["module"] = record.module
+        log_entry["function"] = record.funcName
+        log_entry["line"] = record.lineno
         return json.dumps(log_entry)
 
 

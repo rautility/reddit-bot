@@ -13,7 +13,7 @@ from typing import Optional
 from tqdm import tqdm
 
 from args import cmdline_args
-from bot import RedditBot, BotConfig, GhostLogger
+from bot import RedditBot, BotConfig
 from bot.actions.base import ActionResult
 from bot.reporting import ExecutionSummary, send_webhook, setup_structured_logger
 from bot.utils.credentials import read_accounts, read_accounts_from_env, Account
@@ -70,6 +70,35 @@ def _browser_startup_failure_summary(
     )
     summary.finalize()
     return summary
+
+
+def _setup_bot_logger(config: BotConfig) -> logging.Logger:
+    """Create the shared console/file logger for bot runs."""
+    return setup_structured_logger(
+        "reddit-bot",
+        level=logging.INFO if config.verbose else logging.WARNING,
+        log_dir=config.log_dir,
+        log_file=config.log_file,
+        console=config.verbose,
+        file_level=logging.INFO,
+    )
+
+
+def _log_summary_failures(summary: ExecutionSummary, logger: logging.Logger) -> None:
+    """Write failed action details to durable logs for later maintenance review."""
+    if summary.failed == 0:
+        return
+
+    logger.error(
+        f"Run completed with {summary.failed} failed action(s) out of {summary.total}."
+    )
+    for result in summary.results:
+        if result.success:
+            continue
+        logger.error(
+            f"Action failed: action={result.action} link={result.link!r} "
+            f"message={result.message}"
+        )
 
 
 def _add_account_failure(
@@ -196,8 +225,13 @@ def run_scheduled(config: BotConfig, accounts: list[Account], entries: list[Acti
 
     def scheduled_run():
         logger.info("Starting scheduled run...")
-        _execute_run(config, accounts, entries, logger)
-        scheduler.enter(interval, 1, scheduled_run)
+        try:
+            summary = _execute_run(config, accounts, entries, logger)
+            _log_summary_failures(summary, logger)
+        except Exception:
+            logger.exception("Scheduled run failed")
+        finally:
+            scheduler.enter(interval, 1, scheduled_run)
 
     scheduler.enter(0, 1, scheduled_run)
     scheduler.run()
@@ -234,21 +268,22 @@ def _execute_run(
     logger,
 ) -> ExecutionSummary:
     """Execute the full run (all accounts, all actions)."""
-    if config.use_existing_chrome and config.parallel_accounts > 1:
+    parallel_accounts = config.parallel_accounts
+    if config.use_existing_chrome and parallel_accounts > 1:
         logger.warning(
             "Existing Chrome mode is best run sequentially; forcing parallel_accounts = 1"
         )
-        config.parallel_accounts = 1
+        parallel_accounts = 1
 
     if config.dry_run:
         return _execute_dry_run(accounts, entries, logger)
 
     combined_summary = ExecutionSummary()
 
-    if config.parallel_accounts > 1:
+    if parallel_accounts > 1:
         # Parallel execution
-        logger.info(f"Running {len(accounts)} accounts in parallel (max {config.parallel_accounts} workers)")
-        with ThreadPoolExecutor(max_workers=config.parallel_accounts) as executor:
+        logger.info(f"Running {len(accounts)} accounts in parallel (max {parallel_accounts} workers)")
+        with ThreadPoolExecutor(max_workers=parallel_accounts) as executor:
             futures = {
                 executor.submit(run_account, acc, entries, config, logger): acc
                 for acc in accounts
@@ -260,7 +295,15 @@ def _execute_run(
                     for r in summary.results:
                         combined_summary.add(r)
                 except Exception as e:
-                    logger.error(f"Account {account.username} failed: {e}")
+                    logger.exception(f"Account {account.username} failed")
+                    combined_summary.add(
+                        ActionResult(
+                            success=False,
+                            action="account",
+                            link="",
+                            message=f"{account.username}: {e}",
+                        )
+                    )
     else:
         # Sequential execution
         for acc in tqdm(accounts, desc="Accounts", disable=not config.verbose):
@@ -280,61 +323,69 @@ def _execute_run(
 
 
 def main() -> None:
-    args = cmdline_args()
-    config = load_config(args)
+    logger: Optional[logging.Logger] = None
+    try:
+        args = cmdline_args()
+        config = load_config(args)
 
-    # Logger
-    logger = GhostLogger()
-    if config.verbose:
-        logger = setup_structured_logger("reddit-bot", level=logging.INFO)
+        # Logger
+        logger = _setup_bot_logger(config)
 
-    # Load accounts
-    accounts = load_accounts(config)
-    if not accounts:
-        logger.error("No accounts provided. Use -a/--accounts or REDDIT_ACCOUNT_N env vars.")
-        sys.exit(1)
-
-    # Load actions
-    if not config.links_path:
-        logger.error("No links file provided. Use -l/--links.")
-        sys.exit(1)
-
-    entries = parse_links_file(config.links_path)
-    if not entries:
-        logger.error("No actions found in links file.")
-        sys.exit(1)
-
-    logger.info(f"Loaded {len(accounts)} accounts and {len(entries)} actions")
-
-    if config.dry_run:
-        logger.info("DRY RUN MODE — no actions will be executed")
-
-    # Scheduled or one-shot
-    if config.schedule_cron:
-        run_scheduled(config, accounts, entries, logger)
-    else:
-        summary = _execute_run(config, accounts, entries, logger)
-
-        # Print summary
-        if config.verbose:
-            print(summary.print_table())
-
-        # Webhook notification
-        if config.webhook.enabled and config.webhook.url:
-            success = send_webhook(
-                config.webhook.url,
-                summary,
-                on_completion=config.webhook.on_completion,
-                on_failure=config.webhook.on_failure,
-            )
-            if success:
-                logger.info("Webhook notification sent")
-            else:
-                logger.warning("Webhook notification failed")
-
-        # Exit with error code if any actions failed
-        if summary.failed > 0:
+        # Load accounts
+        accounts = load_accounts(config)
+        if not accounts:
+            logger.error("No accounts provided. Use -a/--accounts or REDDIT_ACCOUNT_N env vars.")
             sys.exit(1)
+
+        # Load actions
+        if not config.links_path:
+            logger.error("No links file provided. Use -l/--links.")
+            sys.exit(1)
+
+        entries = parse_links_file(config.links_path)
+        if not entries:
+            logger.error("No actions found in links file.")
+            sys.exit(1)
+
+        logger.info(f"Loaded {len(accounts)} accounts and {len(entries)} actions")
+
+        if config.dry_run:
+            logger.info("DRY RUN MODE — no actions will be executed")
+
+        # Scheduled or one-shot
+        if config.schedule_cron:
+            run_scheduled(config, accounts, entries, logger)
+        else:
+            summary = _execute_run(config, accounts, entries, logger)
+            _log_summary_failures(summary, logger)
+
+            # Print summary
+            if config.verbose:
+                print(summary.print_table())
+
+            # Webhook notification
+            if config.webhook.enabled and config.webhook.url:
+                success = send_webhook(
+                    config.webhook.url,
+                    summary,
+                    on_completion=config.webhook.on_completion,
+                    on_failure=config.webhook.on_failure,
+                )
+                if success:
+                    logger.info("Webhook notification sent")
+                else:
+                    logger.warning("Webhook notification failed")
+
+            # Exit with error code if any actions failed
+            if summary.failed > 0:
+                sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception:
+        if logger is None:
+            logger = _setup_bot_logger(BotConfig())
+        logger.exception("Unhandled reddit-bot failure")
+        raise
 
 
 if __name__ == "__main__":

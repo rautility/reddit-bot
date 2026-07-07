@@ -1,7 +1,9 @@
 """Tests for reporting and summary generation."""
 
+import json
+
 from bot.actions.base import ActionResult
-from bot.reporting import ExecutionSummary
+from bot.reporting import ExecutionSummary, setup_structured_logger
 
 
 class TestExecutionSummary:
@@ -37,3 +39,40 @@ class TestExecutionSummary:
         assert d["total"] == 1
         assert d["succeeded"] == 1
         assert len(d["results"]) == 1
+
+
+def test_structured_logger_writes_json_file(tmp_path):
+    logger = setup_structured_logger(
+        "test-reddit-bot-reporting",
+        log_dir=tmp_path,
+        log_file="bot.log",
+        console=False,
+    )
+
+    logger.error("Failure to inspect later")
+
+    log_path = tmp_path / "bot.log"
+    assert log_path.exists()
+    record = json.loads(log_path.read_text().splitlines()[0])
+    assert record["level"] == "ERROR"
+    assert record["message"] == "Failure to inspect later"
+    assert record["logger"] == "test-reddit-bot-reporting"
+
+
+def test_structured_logger_does_not_duplicate_managed_handlers(tmp_path):
+    logger = setup_structured_logger(
+        "test-reddit-bot-no-duplicates",
+        log_dir=tmp_path,
+        log_file="bot.log",
+        console=False,
+    )
+    setup_structured_logger(
+        "test-reddit-bot-no-duplicates",
+        log_dir=tmp_path,
+        log_file="bot.log",
+        console=False,
+    )
+
+    logger.error("Write once")
+
+    assert len((tmp_path / "bot.log").read_text().splitlines()) == 1

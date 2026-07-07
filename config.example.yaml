@@ -44,6 +44,8 @@ rate_limit:
 # Orchestration
 parallel_accounts: 1
 # schedule_cron: "0 */6 * * *"  # Run every 6 hours
+# Agents should prefer scripts/agentctl.py queue submit/worker for live Reddit
+# actions so queue leases and atomic quota reservations are enforced.
 session_persistence: false
 session_dir: ".sessions"
 
@@ -54,6 +56,8 @@ credentials_key_env: "REDDIT_BOT_KEY"
 # Reporting
 screenshot_on_failure: false
 screenshot_dir: "screenshots"
+log_dir: "logs"
+log_file: "reddit-bot.log"
 db_path: "reddit_bot.db"
 
 # Self-healing selectors
