@@ -309,6 +309,75 @@ def test_search_upvote_transient_budget_exhausts_then_moves_on(mocker):
     assert vote_cls.return_value.execute.call_count == 3  # 2 on c1 (attempt+retry), 1 on c2
 
 
+def test_search_upvote_populates_structured_details(mocker):
+    driver = mocker.Mock()
+    config = BotConfig()
+    deleted_url = "https://www.reddit.com/r/x/comments/aaa/deleted/"
+    votable_url = "https://www.reddit.com/r/x/comments/bbb/votable/"
+    search_cls = mocker.patch("bot.actions.search.HumanSearchAction")
+    search_cls.return_value.collect_candidates.return_value = [
+        {"url": deleted_url, "title": "deleted", "source": "extension", "age_days": 900},
+        {"url": votable_url, "title": "votable", "source": "extension", "age_days": 12},
+    ]
+    mocker.patch("bot.actions.search.Timeouts.med")
+    vote_cls = mocker.patch("bot.actions.vote.VoteAction")
+    vote_cls.return_value.execute.side_effect = [
+        ActionResult(
+            success=False,
+            action="upvote",
+            link=deleted_url,
+            message="Post is deleted; voting was not attempted.",
+        ),
+        ActionResult(success=True, action="upvote", link=votable_url, message="Vote registered"),
+    ]
+
+    result = SearchUpvoteAction(driver, config).execute(link="q", subreddit="excel")
+
+    d = result.details
+    assert d is not None
+    assert d["query"] == "q"
+    assert d["subreddit"] == "excel"
+    assert d["candidatesConsidered"] == 2
+    assert d["selectedUrl"] == votable_url
+    assert d["attempts"][0] == {
+        "index": 1,
+        "url": deleted_url,
+        "title": "deleted",
+        "ageDays": 900,
+        "outcome": "skipped",
+        "reason": "deleted",
+        "voteAttempts": 1,
+    }
+    assert d["attempts"][1]["outcome"] == "upvoted"
+    assert d["attempts"][1]["reason"] is None
+    assert d["attempts"][1]["ageDays"] == 12
+
+
+def test_search_upvote_details_on_total_failure(mocker):
+    driver = mocker.Mock()
+    config = BotConfig()
+    url1 = "https://www.reddit.com/r/x/comments/aaa/one/"
+    search_cls = mocker.patch("bot.actions.search.HumanSearchAction")
+    search_cls.return_value.collect_candidates.return_value = [
+        {"url": url1, "title": "one", "source": "extension"},
+    ]
+    mocker.patch("bot.actions.search.Timeouts.med")
+    vote_cls = mocker.patch("bot.actions.vote.VoteAction")
+    vote_cls.return_value.execute.return_value = ActionResult(
+        success=False,
+        action="upvote",
+        link=url1,
+        message="Post is archived; voting was not attempted.",
+    )
+
+    result = SearchUpvoteAction(driver, config).execute(link="q")
+
+    assert result.success is False
+    assert result.details["selectedUrl"] is None
+    assert result.details["attempts"][0]["outcome"] == "skipped"
+    assert result.details["attempts"][0]["reason"] == "archived"
+
+
 def test_search_upvote_returns_failure_when_no_candidates(mocker):
     driver = mocker.Mock()
     config = BotConfig()

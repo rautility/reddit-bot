@@ -1406,6 +1406,22 @@ def _selected_post_url_from_outcomes(
     return fallback
 
 
+def _selection_details_from_outcomes(
+    outcomes: list[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    """Pull the structured search_upvote diagnostics (attempts/skip trace) out of
+    the first job result that carries them, for the normalized envelope."""
+    for item in outcomes:
+        result = item.get("result") or {}
+        results = result.get("results") if isinstance(result, dict) else None
+        if not results or not isinstance(results[0], dict):
+            continue
+        details = results[0].get("details")
+        if isinstance(details, dict) and details.get("attempts"):
+            return details
+    return None
+
+
 def _poll_job_outcomes(
     args: argparse.Namespace,
     job_ids: list[int],
@@ -1462,6 +1478,24 @@ def _print_external_search_upvote(payload: dict[str, Any]) -> None:
                 for item in results
             ],
         )
+    selection = data.get("selectionDetails") or {}
+    attempts = selection.get("attempts") if isinstance(selection, dict) else None
+    if attempts:
+        print("\nSelection attempts")
+        _print_table(
+            ["#", "outcome", "reason", "ageDays", "tries", "url"],
+            [
+                [
+                    a.get("index"),
+                    a.get("outcome"),
+                    a.get("reason"),
+                    a.get("ageDays"),
+                    a.get("voteAttempts"),
+                    a.get("url"),
+                ]
+                for a in attempts
+            ],
+        )
 
 
 def command_external_search_upvote(args: argparse.Namespace) -> int:
@@ -1490,6 +1524,7 @@ def command_external_search_upvote(args: argparse.Namespace) -> int:
         "jobIds": [],
         "jobResults": [],
         "selectedPostUrl": None,
+        "selectionDetails": None,
         "mutationStatus": "not_run",
         "idempotency": {"reusedExistingJob": False},
     }
@@ -1554,6 +1589,7 @@ def command_external_search_upvote(args: argparse.Namespace) -> int:
             data["jobIds"] = [existing["id"]]
             data["jobResults"] = [existing]
             data["selectedPostUrl"] = _selected_post_url_from_outcomes(args, [existing])
+            data["selectionDetails"] = _selection_details_from_outcomes([existing])
             data["mutationStatus"] = "succeeded"
             payload = _envelope("external-search-upvote", data=data)
             return _json_or_table(args, payload, _print_external_search_upvote)
@@ -1675,6 +1711,7 @@ def command_external_search_upvote(args: argparse.Namespace) -> int:
     )
     data["jobResults"] = outcomes
     data["selectedPostUrl"] = _selected_post_url_from_outcomes(args, outcomes)
+    data["selectionDetails"] = _selection_details_from_outcomes(outcomes)
     if all(item.get("status") == "succeeded" for item in outcomes):
         data["mutationStatus"] = "succeeded"
         payload = _envelope("external-search-upvote", data=data)

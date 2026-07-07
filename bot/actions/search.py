@@ -815,8 +815,7 @@ class SearchUpvoteAction(BaseAction):
 
         from .vote import VoteAction
 
-        skipped: list[str] = []          # human-readable skip trace, e.g. "[1] archived"
-        attempts_detail: list[str] = []  # full messages for the failure summary
+        attempts: list[dict[str, Any]] = []  # structured per-candidate trace
         last_screenshot: str | None = None
         total = len(candidates)
         # Global budget of extra attempts for transient (probably-recoverable)
@@ -852,6 +851,12 @@ class SearchUpvoteAction(BaseAction):
                 Timeouts.med()
 
             if vote_result.success:
+                attempts.append({
+                    "index": index, "url": url, "title": title, "ageDays": age_days,
+                    "outcome": "upvoted", "reason": None, "voteAttempts": attempts_here,
+                    "message": vote_result.message,
+                })
+                skipped = [f"[{a['index']}] {a['reason']}" for a in attempts if a["outcome"] == "skipped"]
                 retry_note = f" (retried {attempts_here - 1}x)" if attempts_here > 1 else ""
                 skip_note = f" after skipping {', '.join(skipped)}" if skipped else ""
                 return ActionResult(
@@ -863,6 +868,7 @@ class SearchUpvoteAction(BaseAction):
                         f"({title}); {vote_result.message}{retry_note}{skip_note}"
                     ),
                     screenshot_path=vote_result.screenshot_path,
+                    details=self._build_details(search_query, subreddit, total, attempts, url),
                 )
 
             reason = self._short_reason(vote_result.message)
@@ -871,11 +877,16 @@ class SearchUpvoteAction(BaseAction):
                 f"search_upvote candidate {index}/{total} {kind} skip "
                 f"(age_days={age_days}, attempts={attempts_here}, {url}): {vote_result.message}"
             )
-            skipped.append(f"[{index}] {reason}")
-            attempts_detail.append(f"[{index}] {url}: {vote_result.message}")
+            attempts.append({
+                "index": index, "url": url, "title": title, "ageDays": age_days,
+                "outcome": "skipped", "reason": reason, "voteAttempts": attempts_here,
+                "message": vote_result.message,
+            })
             if index < total:
                 Timeouts.med()
 
+        skipped = [f"[{a['index']}] {a['reason']}" for a in attempts]
+        attempts_detail = [f"[{a['index']}] {a['url']}: {a['message']}" for a in attempts]
         return ActionResult(
             success=False,
             action=self.name,
@@ -885,7 +896,36 @@ class SearchUpvoteAction(BaseAction):
                 f"[{'; '.join(skipped)}]: " + " | ".join(attempts_detail)
             ),
             screenshot_path=last_screenshot,
+            details=self._build_details(search_query, subreddit, total, attempts, None),
         )
+
+    @staticmethod
+    def _build_details(
+        query: str,
+        subreddit: str,
+        considered: int,
+        attempts: list[dict[str, Any]],
+        selected_url: str | None,
+    ) -> dict[str, Any]:
+        """Machine-readable diagnostics for external callers (lands in result_json)."""
+        return {
+            "query": query,
+            "subreddit": (subreddit or "").strip().lstrip("/") or None,
+            "candidatesConsidered": considered,
+            "selectedUrl": selected_url,
+            "attempts": [
+                {
+                    "index": a["index"],
+                    "url": a["url"],
+                    "title": a["title"],
+                    "ageDays": a["ageDays"],
+                    "outcome": a["outcome"],
+                    "reason": a["reason"],
+                    "voteAttempts": a["voteAttempts"],
+                }
+                for a in attempts
+            ],
+        }
 
     @staticmethod
     def _is_definitive_failure(message: str) -> bool:
