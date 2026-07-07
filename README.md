@@ -22,6 +22,7 @@
 - [Supported Actions](#supported-actions)
 - [Anti-Detection](#anti-detection)
 - [Orchestration](#orchestration)
+- [Agentic Operation](#agentic-operation)
 - [Credentials & Security](#credentials--security)
 - [Reporting & Notifications](#reporting--notifications)
 - [Database Tracking](#database-tracking)
@@ -273,6 +274,8 @@ See [`config.example.yaml`](config.example.yaml) for the full template with comm
 | `REDDIT_BOT_HEADLESS` | Enable headless mode (`true`/`false`) |
 | `REDDIT_BOT_DRY_RUN` | Enable dry run (`true`/`false`) |
 | `REDDIT_BOT_DB_PATH` | Path to SQLite database |
+| `REDDIT_BOT_LOG_DIR` | Directory for durable JSONL logs |
+| `REDDIT_BOT_LOG_FILE` | File name for durable bot logs |
 | `REDDIT_BOT_WEBHOOK_URL` | Webhook URL for notifications |
 | `REDDIT_BOT_USE_EXISTING_CHROME` | Use already-authenticated Chrome profile/instance (`true`/`false`) |
 | `REDDIT_BOT_CHROME_USER_DATA_DIR` | Path to Chrome user data directory |
@@ -424,6 +427,95 @@ Shuffles the action list for each account so they don't all perform the same seq
 
 ## Orchestration
 
+### Agentic Operation
+
+LLM agents should start with the agent runbook:
+
+```bash
+cat AGENTS.md
+.venv/bin/python scripts/agentctl.py status
+```
+
+For live Reddit mutations, agents should submit actions to the shared queue
+instead of running `main.py` directly:
+
+```bash
+.venv/bin/python scripts/agentctl.py profiles associate \
+  --profile-name "Chrome Reddit Bot Debug Profile" \
+  --reddit-user "u/Particular-Arm2102"
+
+.venv/bin/python scripts/agentctl.py queue submit \
+  --reddit-user "u/Particular-Arm2102" \
+  --links links.txt
+
+.venv/bin/python scripts/agentctl.py --config config.yaml queue worker --once
+```
+
+Agents can also queue by Chrome profile with `--profile-name "Chrome Reddit Bot Debug Profile"`.
+The queue uses SQLite leases and atomic daily quota reservations to coordinate
+parallel agents. See `docs/agentic-operations.md` and
+`docs/scheduler-and-rate-limits.md`.
+
+### Human-Friendly Operations CLI
+
+Use `scripts/reddit_tool.py` for day-to-day inspection and simple scheduling. It
+is a thin `argparse` wrapper around `agentctl`, so live work still goes through
+the project queue, schedule registry, executor, leases, and quotas.
+
+Open the interactive terminal menu:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py menu
+```
+
+The menu covers overview, capabilities, schedules, queue, job lookup, executor
+status, recent errors, profiles, limits, adding schedules, queue submission, and
+running due schedules.
+
+Direct commands are still available when you know what you want:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py overview
+.venv/bin/python scripts/reddit_tool.py schedules
+.venv/bin/python scripts/reddit_tool.py queue --status failed
+.venv/bin/python scripts/reddit_tool.py executor
+.venv/bin/python scripts/reddit_tool.py errors
+```
+
+Add a one-time scheduled action by writing the action file automatically:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py schedule add \
+  --name "Upvote example post" \
+  --link "https://www.reddit.com/r/example/comments/abc/title/" \
+  --action upvote \
+  --at "2026-07-06T09:00:00"
+```
+
+Register a recurring schedule from an existing links/action file:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py schedule add \
+  --name "Weekday Reddit actions" \
+  --links links.txt \
+  --weekly MO,WE,FR \
+  --time 09:30
+```
+
+Submit immediate queue work without running it yet:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py queue add --links links.txt
+```
+
+Run due project schedules and exactly one worker pass:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py schedule run-due --run-worker
+```
+
+After editable install, the same CLI is available as `reddit-tool`.
+
 ### Parallel Execution
 
 Run multiple accounts simultaneously:
@@ -536,6 +628,23 @@ python main.py -l links.txt
 ---
 
 ## Reporting & Notifications
+
+### Durable Logs
+
+Every bot run creates durable JSON-line logs at `logs/reddit-bot.log` by default, even when `--verbose` is not enabled. The Chrome debug helper writes command failures to `logs/reddit-healer-debug.log`.
+
+Weekly troubleshooting instructions live in [`docs/weekly-log-maintenance.md`](docs/weekly-log-maintenance.md).
+
+Override the bot log location from config, environment variables, or CLI:
+
+```yaml
+log_dir: "logs"
+log_file: "reddit-bot.log"
+```
+
+```bash
+python main.py -a accounts.txt -l links.txt --log-dir logs --log-file reddit-bot.log
+```
 
 ### Execution Summary
 
@@ -711,6 +820,8 @@ options:
   --encrypt-credentials Accounts file is encrypted
   --screenshot-on-failure Capture screenshots on action failure
   --webhook-url URL     Webhook URL for notifications
+  --log-dir DIR         Directory for durable bot logs
+  --log-file FILE       File name for durable bot logs
 ```
 
 ---
@@ -757,8 +868,8 @@ reddit-bot/
 │   ├── bot.py                 # Core RedditBot class
 │   ├── config.py              # BotConfig dataclass with YAML/env support
 │   ├── database.py            # SQLite action tracking
-│   ├── ghost_logger.py        # No-op logger for silent mode
-│   ├── reporting.py           # Summary, structured logging, webhooks
+│   ├── ghost_logger.py        # Legacy no-op logger
+│   ├── reporting.py           # Summary, durable structured logging, webhooks
 │   ├── actions/               # Plugin-based action system
 │   │   ├── base.py            # BaseAction ABC and ActionResult
 │   │   ├── registry.py        # Action name -> class mapping
