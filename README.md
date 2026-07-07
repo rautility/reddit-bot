@@ -878,16 +878,23 @@ reddit-bot/
 ├── config.example.yaml        # Example configuration file
 ├── pyproject.toml             # Package configuration
 ├── Dockerfile                 # Docker support
+├── Makefile                   # Test, skill sync, and UI shortcuts
+├── AGENTS.md                  # Agent runbook and live-action policy
 ├── bot/
 │   ├── __init__.py
 │   ├── bot.py                 # Core RedditBot class
 │   ├── config.py              # BotConfig dataclass with YAML/env support
-│   ├── database.py            # SQLite action tracking
+│   ├── database.py            # SQLite action log, queue, leases, schedules, quotas
+│   ├── action_schema.py       # Machine-readable reddit-tool action schema
+│   ├── agentctl.py            # Agent-safe control plane CLI
+│   ├── tool_cli.py            # Human-friendly reddit-tool CLI and JSON envelope
+│   ├── skills_sync.py         # .claude -> .codex skill mirror utility
 │   ├── ghost_logger.py        # Legacy no-op logger
 │   ├── reporting.py           # Summary, durable structured logging, webhooks
 │   ├── actions/               # Plugin-based action system
 │   │   ├── base.py            # BaseAction ABC and ActionResult
 │   │   ├── registry.py        # Action name -> class mapping
+│   │   ├── search.py          # Human search and search_upvote flows
 │   │   ├── vote.py            # Upvote/downvote
 │   │   ├── comment.py         # Comment on post
 │   │   ├── community.py       # Join/leave subreddit
@@ -897,22 +904,25 @@ reddit-bot/
 │   │   ├── follow.py          # Follow/unfollow users
 │   │   └── profile.py         # Update bio
 │   └── utils/                 # Shared utilities
+│       ├── chrome_extension_bridge.py # Reddit healer extension bridge
+│       ├── chromedriver.py    # ChromeDriver resolution helper
+│       ├── clock.py           # UTC timestamp helpers
 │       ├── timeouts.py        # Randomized delays
 │       ├── retry.py           # Exponential backoff decorator
 │       ├── mouse.py           # Bezier curve mouse movement
+│       ├── self_healing.py    # Runtime selector healing
+│       ├── visible_vote.py    # Visible vote control diagnostics/clicking
 │       ├── user_agents.py     # UA string rotation
 │       ├── credentials.py     # Account parsing and encryption
 │       ├── input_parser.py    # Action file parsing
 │       ├── validators.py      # URL validation
 │       └── proxy.py           # Proxy loading and rotation
-├── tests/                     # Test suite
-│   ├── test_config.py
-│   ├── test_credentials.py
-│   ├── test_input_parser.py
-│   ├── test_validators.py
-│   ├── test_database.py
-│   ├── test_proxy.py
-│   └── test_reporting.py
+│   └── web/                   # Localhost-only dashboard server
+├── chrome_extension/          # Reddit healer Chrome extension
+├── docs/                      # Agent operations, scheduling, UI, and maintenance docs
+├── scripts/                   # Thin CLI launchers and diagnostics
+├── tests/                     # Unit and API test suite
+├── web/                       # Zero-build dashboard frontend
 └── .github/
     └── workflows/
         └── ci.yml             # GitHub Actions CI pipeline
