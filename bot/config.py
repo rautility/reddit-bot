@@ -98,6 +98,11 @@ class BotConfig:
     # Posts older than this (days) are tried last, since old posts are the ones
     # most likely to be archived/unvotable. Reordering only — none are dropped.
     search_upvote_recent_days: int = 365
+    # Global budget of extra vote attempts spent on *transient* failures (vote
+    # button not found, click did not register) where the post is probably still
+    # votable. Definitive failures (deleted/removed/archived) never retry. Bounds
+    # total attempts to search_upvote_max_candidates + this value.
+    search_upvote_transient_retries: int = 1
 
     @classmethod
     def from_yaml(cls, path: str) -> "BotConfig":
@@ -127,6 +132,7 @@ class BotConfig:
             "chrome_extension_healer_enabled", "chrome_extension_path",
             "chrome_extension_bridge_timeout_ms", "chrome_extension_min_confidence",
             "search_upvote_max_candidates", "search_upvote_recent_days",
+            "search_upvote_transient_retries",
         }
         for key in simple_fields:
             if key in data:

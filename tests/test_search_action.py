@@ -240,6 +240,75 @@ def test_search_upvote_fails_when_all_candidates_unvotable(mocker):
     assert vote_cls.return_value.execute.call_count == 2
 
 
+def test_is_definitive_failure_classification():
+    definitive = SearchUpvoteAction._is_definitive_failure
+    assert definitive("Post is deleted; voting was not attempted.")
+    assert definitive("Post is archived; voting was not attempted.")
+    assert definitive("Post does not allow voting; voting was not attempted.")
+    assert definitive("Upvote control is disabled; post may be archived or voting is unavailable")
+    # Hedged/transient messages must NOT be misread as definitive.
+    assert not definitive("Could not find upvote button; post may be unavailable or Reddit layout changed")
+    assert not definitive("Vote click did not register as active upvote")
+    assert not definitive("Could not open post: timeout")
+
+
+def test_search_upvote_retries_transient_failure_then_succeeds(mocker):
+    driver = mocker.Mock()
+    config = BotConfig()  # search_upvote_transient_retries defaults to 1
+    url = "https://www.reddit.com/r/x/comments/aaa/one/"
+    search_cls = mocker.patch("bot.actions.search.HumanSearchAction")
+    search_cls.return_value.collect_candidates.return_value = [
+        {"url": url, "title": "one", "source": "extension"},
+    ]
+    mocker.patch("bot.actions.search.Timeouts.med")
+    vote_cls = mocker.patch("bot.actions.vote.VoteAction")
+    vote_cls.return_value.execute.side_effect = [
+        ActionResult(
+            success=False,
+            action="upvote",
+            link=url,
+            message="Vote click did not register as active upvote",
+        ),
+        ActionResult(success=True, action="upvote", link=url, message="Vote registered"),
+    ]
+
+    result = SearchUpvoteAction(driver, config).execute(link="q")
+
+    assert result.success is True
+    assert result.link == url
+    assert "retried 1x" in result.message
+    assert vote_cls.return_value.execute.call_count == 2  # transient failure was retried
+
+
+def test_search_upvote_transient_budget_exhausts_then_moves_on(mocker):
+    driver = mocker.Mock()
+    config = BotConfig()  # budget of 1 transient retry for the whole run
+    url1 = "https://www.reddit.com/r/x/comments/aaa/one/"
+    url2 = "https://www.reddit.com/r/x/comments/bbb/two/"
+    search_cls = mocker.patch("bot.actions.search.HumanSearchAction")
+    search_cls.return_value.collect_candidates.return_value = [
+        {"url": url1, "title": "one", "source": "extension"},
+        {"url": url2, "title": "two", "source": "extension"},
+    ]
+    mocker.patch("bot.actions.search.Timeouts.med")
+    vote_cls = mocker.patch("bot.actions.vote.VoteAction")
+    vote_cls.return_value.execute.side_effect = [
+        # candidate 1, attempt 1 -> transient (consumes the retry budget)
+        ActionResult(success=False, action="upvote", link=url1, message="Vote click did not register"),
+        # candidate 1, retry -> transient again, budget now exhausted -> move on
+        ActionResult(success=False, action="upvote", link=url1, message="Vote click did not register"),
+        # candidate 2, attempt 1 -> success, no retry budget left
+        ActionResult(success=True, action="upvote", link=url2, message="Vote registered"),
+    ]
+
+    result = SearchUpvoteAction(driver, config).execute(link="q")
+
+    assert result.success is True
+    assert result.link == url2
+    assert "2/2" in result.message
+    assert vote_cls.return_value.execute.call_count == 3  # 2 on c1 (attempt+retry), 1 on c2
+
+
 def test_search_upvote_returns_failure_when_no_candidates(mocker):
     driver = mocker.Mock()
     config = BotConfig()

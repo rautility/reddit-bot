@@ -819,6 +819,9 @@ class SearchUpvoteAction(BaseAction):
         attempts_detail: list[str] = []  # full messages for the failure summary
         last_screenshot: str | None = None
         total = len(candidates)
+        # Global budget of extra attempts for transient (probably-recoverable)
+        # failures. Bounds total vote attempts to total + retry_budget.
+        retry_budget = max(0, int(getattr(self.config, "search_upvote_transient_retries", 1)))
         for index, candidate in enumerate(candidates, start=1):
             url = (candidate.get("url") or "").strip()
             if not url:
@@ -826,26 +829,47 @@ class SearchUpvoteAction(BaseAction):
             title = candidate.get("title") or url
             source = candidate.get("source") or "search"
             age_days = candidate.get("age_days")
-            vote_result = VoteAction(self.driver, self.config, self.logger).execute(
-                link=url, upvote=True
-            )
-            last_screenshot = vote_result.screenshot_path or last_screenshot
+
+            attempts_here = 0
+            while True:
+                vote_result = VoteAction(self.driver, self.config, self.logger).execute(
+                    link=url, upvote=True
+                )
+                attempts_here += 1
+                last_screenshot = vote_result.screenshot_path or last_screenshot
+                if (
+                    vote_result.success
+                    or self._is_definitive_failure(vote_result.message)
+                    or retry_budget <= 0
+                ):
+                    break
+                # Transient failure and budget available: retry the same post.
+                retry_budget -= 1
+                self.logger.info(
+                    f"search_upvote candidate {index}/{total} transient failure, "
+                    f"retrying same post: {vote_result.message}"
+                )
+                Timeouts.med()
+
             if vote_result.success:
-                note = f" after skipping {', '.join(skipped)}" if skipped else ""
+                retry_note = f" (retried {attempts_here - 1}x)" if attempts_here > 1 else ""
+                skip_note = f" after skipping {', '.join(skipped)}" if skipped else ""
                 return ActionResult(
                     success=True,
                     action=self.name,
                     link=url,
                     message=(
                         f"Upvoted {source} search result {index}/{total} "
-                        f"({title}); {vote_result.message}{note}"
+                        f"({title}); {vote_result.message}{retry_note}{skip_note}"
                     ),
                     screenshot_path=vote_result.screenshot_path,
                 )
+
             reason = self._short_reason(vote_result.message)
+            kind = "definitive" if self._is_definitive_failure(vote_result.message) else "transient"
             self.logger.info(
-                f"search_upvote candidate {index}/{total} not votable "
-                f"(age_days={age_days}, {url}): {vote_result.message}"
+                f"search_upvote candidate {index}/{total} {kind} skip "
+                f"(age_days={age_days}, attempts={attempts_here}, {url}): {vote_result.message}"
             )
             skipped.append(f"[{index}] {reason}")
             attempts_detail.append(f"[{index}] {url}: {vote_result.message}")
@@ -862,6 +886,19 @@ class SearchUpvoteAction(BaseAction):
             ),
             screenshot_path=last_screenshot,
         )
+
+    @staticmethod
+    def _is_definitive_failure(message: str) -> bool:
+        """True when the post genuinely cannot be voted (skip to the next candidate).
+
+        Everything else — vote button not found, click did not register, could not
+        open the post — is treated as transient and worth one retry, because the
+        post itself is probably still votable. Matching is anchored on VoteAction's
+        certainty phrases so a hedged transient message ("post may be unavailable
+        or Reddit layout changed") is NOT misread as definitive.
+        """
+        text = (message or "").lower()
+        return "voting was not attempted" in text or "control is disabled" in text
 
     @staticmethod
     def _short_reason(message: str) -> str:
