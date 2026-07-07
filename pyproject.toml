@@ -27,6 +27,8 @@ dev = [
 
 [project.scripts]
 reddit-bot = "main:main"
+reddit-agentctl = "bot.agentctl:main"
+reddit-tool = "bot.tool_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
