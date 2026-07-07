@@ -736,6 +736,30 @@ class BotDatabase:
             for offset in range(days)
         ]
 
+    def get_action_history(
+        self,
+        *,
+        account: str | None = None,
+        result: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM action_log"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if account:
+            clauses.append("account = ?")
+            params.append(account)
+        if result == "success":
+            clauses.append("success = 1")
+        elif result == "fail":
+            clauses.append("(success = 0 OR error_message IS NOT NULL)")
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        cursor = self.conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
     # ─── Resource leases ────────────────────────────────────────
 
     def acquire_lease(

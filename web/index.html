@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>reddit-bot local dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>reddit-bot</h1>
+          <p id="profileMeta" class="muted">Loading profiles...</p>
+        </div>
+        <label class="profile-picker">
+          <span>Profile</span>
+          <select id="profileSelect"></select>
+        </label>
+      </header>
+
+      <nav class="tabs" aria-label="Dashboard sections">
+        <button class="tab active" data-view="overview" type="button">Overview</button>
+        <button class="tab" data-view="schedule" type="button">Schedule</button>
+        <button class="tab" data-view="failed" type="button">Failed</button>
+        <button class="tab" data-view="success" type="button">Successful</button>
+        <button class="tab" data-view="add" type="button">Add Task</button>
+        <button class="tab" data-view="daily" type="button">Per Day</button>
+      </nav>
+
+      <main id="view" class="view" aria-live="polite"></main>
+      <div id="toast" class="toast" hidden></div>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

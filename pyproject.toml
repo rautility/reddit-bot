@@ -30,6 +30,7 @@ dev = [
 reddit-bot = "main:main"
 reddit-agentctl = "bot.agentctl:main"
 reddit-tool = "bot.tool_cli:main"
+reddit-ui = "bot.web.server:main"
 
 [tool.setuptools]
 py-modules = ["main", "args"]

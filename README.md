@@ -128,6 +128,15 @@ docker build -t reddit-bot .
 
 > **Note:** Chrome and chromedriver are automatically managed by `webdriver-manager` — no manual download required.
 
+### Local Web UI
+
+```bash
+make ui
+```
+
+The dashboard binds to `127.0.0.1:8765` by default and uses the same
+`agentctl`/`reddit-tool` control plane as the terminal workflow.
+
 ---
 
 ## Quick Start

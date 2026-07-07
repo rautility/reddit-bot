@@ -1,6 +1,6 @@
 PY ?= .venv/bin/python
 
-.PHONY: sync-skill check-skill test
+.PHONY: sync-skill check-skill test ui
 
 # Mirror the reddit-bot skill from .claude/skills to .codex/skills.
 sync-skill:
@@ -12,3 +12,6 @@ check-skill:
 
 test:
 	$(PY) -m pytest tests/ -q
+
+ui:
+	$(PY) scripts/reddit_ui.py
