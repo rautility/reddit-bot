@@ -35,6 +35,9 @@ $TOOL schedule add --name "Weekday actions" --links links.txt --weekly MO,WE,FR 
 ```bash
 $TOOL schedules                 # registered schedules + Codex automations
 $TOOL schedule run-due --run-worker   # submit anything due now and run one worker pass
+$TOOL schedule pause --id "<schedule_id>"
+$TOOL schedule resume --id "<schedule_id>"
+$TOOL schedule delete --id "<schedule_id>"
 $TOOL executor                  # status of the background scheduler service
 ```
 

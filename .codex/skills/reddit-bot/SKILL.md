@@ -71,6 +71,8 @@ $TOOL overview               # queue, schedules, executor, profiles, recent erro
 $TOOL job --id <N>           # one job's status + stored result (from `do`/`queue`)
 $TOOL queue --status failed  # queued/failed jobs
 $TOOL queue recover-stale    # release expired running jobs for retry
+$TOOL queue retry --id 123   # requeue one failed job
+$TOOL queue retry --all      # requeue failed jobs
 $TOOL errors                 # recent queue, schedule, action, and executor errors
 ```
 

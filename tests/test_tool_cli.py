@@ -152,6 +152,83 @@ def test_schedule_add_accepts_query_for_search_upvote(tmp_path, capsys):
     assert links_path.read_text() == "best Excel tips|search_upvote\n"
 
 
+def test_queue_retry_json_requeues_failed_job(tmp_path, capsys):
+    db_path = tmp_path / "agent.db"
+    db = BotDatabase(str(db_path))
+    try:
+        job = db.enqueue_action(
+            "default",
+            "upvote",
+            {"link": "https://reddit.com/r/a/comments/abc", "action": "upvote"},
+            link="https://reddit.com/r/a/comments/abc",
+        )
+        db.complete_queue_job(job["id"], success=False, error="boom")
+    finally:
+        db.close()
+
+    exit_code = tool_cli.main(
+        [
+            "--db-path",
+            str(db_path),
+            "--json",
+            "queue",
+            "retry",
+            "--id",
+            str(job["id"]),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 1
+    assert payload["queueCounts"] == {"queued": 1}
+    assert payload["retried"][0]["status"] == "queued"
+
+
+def test_schedule_pause_and_delete_json(tmp_path, capsys):
+    db_path = tmp_path / "agent.db"
+    db = BotDatabase(str(db_path))
+    try:
+        db.register_schedule(
+            "daily-actions",
+            "Daily Actions",
+            source="test",
+            status="ACTIVE",
+        )
+    finally:
+        db.close()
+
+    pause_exit = tool_cli.main(
+        [
+            "--db-path",
+            str(db_path),
+            "--json",
+            "schedule",
+            "pause",
+            "--id",
+            "daily-actions",
+        ]
+    )
+    assert pause_exit == 0
+    pause_payload = json.loads(capsys.readouterr().out)
+    assert pause_payload["schedule"]["status"] == "PAUSED"
+
+    delete_exit = tool_cli.main(
+        [
+            "--db-path",
+            str(db_path),
+            "--json",
+            "schedule",
+            "delete",
+            "--id",
+            "daily-actions",
+        ]
+    )
+    assert delete_exit == 0
+    delete_payload = json.loads(capsys.readouterr().out)
+    assert delete_payload["deleted"] is True
+
+
 def test_external_search_upvote_registers_one_shot_schedule_without_running(tmp_path, capsys):
     db_path = tmp_path / "agent.db"
     actions_dir = tmp_path / "actions"

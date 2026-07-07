@@ -618,6 +618,39 @@ def command_schedule_run_due(args: argparse.Namespace) -> int:
     return _json_or_table(args, payload, _print_run_due)
 
 
+def _print_schedule_change(payload: dict[str, Any]) -> None:
+    schedule = payload.get("schedule") or {}
+    _print_kv(
+        [
+            ("id", schedule.get("id")),
+            ("changed", payload.get("changed", payload.get("deleted"))),
+            ("status", schedule.get("status")),
+            ("message", schedule.get("message")),
+        ]
+    )
+
+
+def command_schedule_pause(args: argparse.Namespace) -> int:
+    payload = _agentctl_payload(
+        args,
+        ["schedules", "set-status", "--id", args.id, "--status", "PAUSED"],
+    )
+    return _json_or_table(args, payload, _print_schedule_change)
+
+
+def command_schedule_resume(args: argparse.Namespace) -> int:
+    payload = _agentctl_payload(
+        args,
+        ["schedules", "set-status", "--id", args.id, "--status", "ACTIVE"],
+    )
+    return _json_or_table(args, payload, _print_schedule_change)
+
+
+def command_schedule_delete(args: argparse.Namespace) -> int:
+    payload = _agentctl_payload(args, ["schedules", "delete", "--id", args.id])
+    return _json_or_table(args, payload, _print_schedule_change)
+
+
 def _print_queue(payload: dict[str, Any]) -> None:
     counts = payload.get("queueCounts", {})
     print("Queue")
@@ -644,6 +677,8 @@ def command_queue_list(args: argparse.Namespace) -> int:
     command = ["queue", "list", "--limit", str(args.limit)]
     if args.status:
         command.extend(["--status", args.status])
+    if args.account:
+        command.extend(["--account", args.account])
     payload = _agentctl_payload(args, command)
     return _json_or_table(args, payload, _print_queue)
 
@@ -747,6 +782,38 @@ def command_queue_recover_stale(args: argparse.Namespace) -> int:
         command.extend(["--now", args.now])
     payload = _agentctl_payload(args, command)
     return _json_or_table(args, payload, _print_queue_recover_stale)
+
+
+def _print_queue_retry(payload: dict[str, Any]) -> None:
+    print("Queue retry")
+    _print_kv([("retried", payload.get("count", 0))])
+    _print_table(
+        ["id", "retried", "status", "account", "action", "attempts", "message"],
+        [
+            [
+                item.get("id"),
+                "yes" if item.get("retried") else "no",
+                item.get("status"),
+                item.get("account"),
+                item.get("action"),
+                f"{item.get('attempts')}/{item.get('max_attempts')}",
+                item.get("message"),
+            ]
+            for item in payload.get("retried", [])
+        ],
+    )
+
+
+def command_queue_retry(args: argparse.Namespace) -> int:
+    command = ["queue", "retry"]
+    if args.id is not None:
+        command.extend(["--id", str(args.id)])
+    else:
+        command.append("--all")
+    if getattr(args, "account", None):
+        command.extend(["--account", args.account])
+    payload = _agentctl_payload(args, command)
+    return _json_or_table(args, payload, _print_queue_retry)
 
 
 def _print_executor(payload: dict[str, Any]) -> None:
@@ -2190,8 +2257,21 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_run_parser.add_argument("--verbose", action="store_true")
     schedule_run_parser.set_defaults(func=command_schedule_run_due)
 
+    schedule_pause_parser = schedule_subparsers.add_parser("pause", help="Pause a registered project schedule.")
+    schedule_pause_parser.add_argument("--id", required=True)
+    schedule_pause_parser.set_defaults(func=command_schedule_pause)
+
+    schedule_resume_parser = schedule_subparsers.add_parser("resume", help="Resume a paused project schedule.")
+    schedule_resume_parser.add_argument("--id", required=True)
+    schedule_resume_parser.set_defaults(func=command_schedule_resume)
+
+    schedule_delete_parser = schedule_subparsers.add_parser("delete", help="Delete a registered project schedule.")
+    schedule_delete_parser.add_argument("--id", required=True)
+    schedule_delete_parser.set_defaults(func=command_schedule_delete)
+
     queue_parser = subparsers.add_parser("queue", help="List or submit queue jobs.")
     queue_parser.add_argument("--status", default=None)
+    queue_parser.add_argument("--account", default="")
     queue_parser.add_argument("--limit", type=int, default=25)
     queue_parser.set_defaults(func=command_queue_list)
     queue_subparsers = queue_parser.add_subparsers(dest="queue_action")
@@ -2213,6 +2293,17 @@ def build_parser() -> argparse.ArgumentParser:
     queue_recover_parser = queue_subparsers.add_parser("recover-stale", help="Release expired running jobs for retry.")
     queue_recover_parser.add_argument("--now", default="", help="Override current time as ISO datetime.")
     queue_recover_parser.set_defaults(func=command_queue_recover_stale)
+
+    queue_retry_parser = queue_subparsers.add_parser("retry", help="Re-queue failed queue jobs.")
+    queue_retry_group = queue_retry_parser.add_mutually_exclusive_group(required=True)
+    queue_retry_group.add_argument("--id", type=int, help="Retry one failed queue job id.")
+    queue_retry_group.add_argument("--all", action="store_true", help="Retry all failed queue jobs.")
+    queue_retry_parser.add_argument(
+        "--account",
+        default=argparse.SUPPRESS,
+        help="Only retry failed jobs for this account label.",
+    )
+    queue_retry_parser.set_defaults(func=command_queue_retry)
 
     executor_parser = subparsers.add_parser("executor", help="Check, ensure, or stop the local schedule executor.")
     executor_parser.add_argument("executor_action", nargs="?", choices=["status", "ensure", "stop"], default="status")

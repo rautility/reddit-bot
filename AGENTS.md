@@ -134,6 +134,13 @@ List queue state:
 .venv/bin/python scripts/agentctl.py queue list
 ```
 
+Retry failed queue jobs:
+
+```bash
+.venv/bin/python scripts/agentctl.py queue retry --id 123
+.venv/bin/python scripts/agentctl.py queue retry --all --account "Particular-Arm2102"
+```
+
 The worker leases one queued job, leases the configured Chrome profile/debug
 address, runs the existing bot action path, and records the result back to
 SQLite.
@@ -193,6 +200,15 @@ Register project-owned schedules in SQLite:
 
 The command above ensures the local executor when the schedule is active,
 has a links file, and resolves to an account. Inspect or manage the executor:
+
+```bash
+.venv/bin/python scripts/agentctl.py schedules set-status --id "reddit-bot-example" --status PAUSED
+.venv/bin/python scripts/agentctl.py schedules set-status --id "reddit-bot-example" --status ACTIVE
+.venv/bin/python scripts/agentctl.py schedules delete --id "reddit-bot-example"
+```
+
+Pause/resume/delete commands update the existing registry row; do not reregister
+the schedule just to change status.
 
 ```bash
 .venv/bin/python scripts/agentctl.py executor status

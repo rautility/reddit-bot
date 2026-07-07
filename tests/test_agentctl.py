@@ -583,6 +583,153 @@ def test_schedule_run_due_can_target_one_schedule_id(tmp_path, capsys):
     assert jobs[0]["link"] == "https://reddit.com/r/test/comments/two"
 
 
+def test_queue_retry_requeues_failed_job(tmp_path, capsys):
+    db_path = tmp_path / "agent.db"
+    links_path = tmp_path / "links.txt"
+    links_path.write_text("https://reddit.com/r/test/comments/abc|upvote\n")
+    agentctl.main(
+        [
+            "--db-path",
+            str(db_path),
+            "queue",
+            "submit",
+            "--account-label",
+            "default",
+            "--links",
+            str(links_path),
+            "--max-attempts",
+            "1",
+        ]
+    )
+    submitted = json.loads(capsys.readouterr().out)
+    job_id = submitted["jobs"][0]["id"]
+    db = BotDatabase(str(db_path))
+    try:
+        leased = db.lease_next_job("worker-1")
+        assert leased["attempts"] == 1
+        db.release_queue_job(job_id, "boom")
+    finally:
+        db.close()
+
+    exit_code = agentctl.main(
+        [
+            "--db-path",
+            str(db_path),
+            "queue",
+            "retry",
+            "--id",
+            str(job_id),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 1
+    assert payload["queueCounts"] == {"queued": 1}
+    assert payload["retried"][0]["status"] == "queued"
+    assert payload["retried"][0]["max_attempts"] == 2
+
+
+def test_queue_retry_all_filters_account(tmp_path, capsys):
+    db_path = tmp_path / "agent.db"
+    db = BotDatabase(str(db_path))
+    try:
+        first = db.enqueue_action(
+            "default",
+            "upvote",
+            {"link": "https://reddit.com/r/a/comments/abc", "action": "upvote"},
+            link="https://reddit.com/r/a/comments/abc",
+        )
+        second = db.enqueue_action(
+            "other",
+            "upvote",
+            {"link": "https://reddit.com/r/b/comments/def", "action": "upvote"},
+            link="https://reddit.com/r/b/comments/def",
+        )
+        db.complete_queue_job(first["id"], success=False, error="default failed")
+        db.complete_queue_job(second["id"], success=False, error="other failed")
+    finally:
+        db.close()
+
+    exit_code = agentctl.main(
+        [
+            "--db-path",
+            str(db_path),
+            "queue",
+            "retry",
+            "--all",
+            "--account",
+            "other",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 1
+    assert payload["retried"][0]["account"] == "other"
+    assert payload["queueCounts"] == {"failed": 1, "queued": 1}
+
+
+def test_schedule_set_status_and_delete(tmp_path, capsys):
+    db_path = tmp_path / "agent.db"
+    links_path = tmp_path / "links.txt"
+    links_path.write_text("https://reddit.com/r/test/comments/abc|upvote\n")
+    agentctl.main(
+        [
+            "--db-path",
+            str(db_path),
+            "schedules",
+            "register",
+            "--id",
+            "daily-actions",
+            "--name",
+            "Daily Actions",
+            "--rrule",
+            "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            "--account",
+            "default",
+            "--links",
+            str(links_path),
+            "--next-run-at",
+            "2026-07-04T09:00:00",
+            "--no-ensure-executor",
+        ]
+    )
+    capsys.readouterr()
+
+    pause_exit = agentctl.main(
+        [
+            "--db-path",
+            str(db_path),
+            "schedules",
+            "set-status",
+            "--id",
+            "daily-actions",
+            "--status",
+            "PAUSED",
+        ]
+    )
+    assert pause_exit == 0
+    pause_payload = json.loads(capsys.readouterr().out)
+    assert pause_payload["changed"] is True
+    assert pause_payload["schedule"]["status"] == "PAUSED"
+
+    delete_exit = agentctl.main(
+        [
+            "--db-path",
+            str(db_path),
+            "schedules",
+            "delete",
+            "--id",
+            "daily-actions",
+        ]
+    )
+    assert delete_exit == 0
+    delete_payload = json.loads(capsys.readouterr().out)
+    assert delete_payload["deleted"] is True
+    assert delete_payload["schedules"] == []
+
+
 def test_vote_click_visible_resolves_profile_and_calls_helper(tmp_path, capsys, mocker):
     db_path = tmp_path / "agent.db"
     agentctl.main(

@@ -58,6 +58,8 @@ $TOOL search-upvote --query "best excel formulas"
 $TOOL schedule add --action search_upvote --query "best excel formulas" --at 2026-07-06T09:00:00
 $TOOL external-search-upvote --query "best excel formulas" --json
 $TOOL queue recover-stale
+$TOOL queue retry --id 123
+$TOOL queue retry --all --account "Particular-Arm2102"
 ```
 
 ## URL contract

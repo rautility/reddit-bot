@@ -1,5 +1,7 @@
 """Tests for the database tracking module."""
 
+from datetime import date, timedelta
+
 import pytest
 
 from bot.database import BotDatabase
@@ -227,3 +229,96 @@ class TestBotDatabase:
         assert schedule["next_run_at"] == "2026-07-05T09:00:00"
         assert schedule["last_run_at"] == "2026-07-04T09:01:00"
         assert schedule["locked_by"] is None
+
+    def test_retry_failed_queue_job_requeues_and_bumps_attempts(self, db):
+        job = db.enqueue_action(
+            "user1",
+            "upvote",
+            {"link": "https://reddit.com/r/a/comments/abc", "action": "upvote"},
+            link="https://reddit.com/r/a/comments/abc",
+            max_attempts=1,
+        )
+        leased = db.lease_next_job("worker-1")
+        assert leased["attempts"] == 1
+        db.release_queue_job(job["id"], "boom")
+
+        retried = db.retry_queue_job(job["id"])
+
+        assert retried["retried"] is True
+        assert retried["status"] == "queued"
+        assert retried["attempts"] == 1
+        assert retried["max_attempts"] == 2
+        assert retried["last_error"] is None
+
+    def test_retry_non_failed_queue_job_is_noop(self, db):
+        job = db.enqueue_action(
+            "user1",
+            "upvote",
+            {"link": "https://reddit.com/r/a/comments/abc", "action": "upvote"},
+            link="https://reddit.com/r/a/comments/abc",
+        )
+
+        retried = db.retry_queue_job(job["id"])
+
+        assert retried["retried"] is False
+        assert "only failed jobs" in retried["message"]
+        assert db.get_queue_job(job["id"])["status"] == "queued"
+
+    def test_retry_failed_jobs_filters_by_account(self, db):
+        first = db.enqueue_action(
+            "user1",
+            "upvote",
+            {"link": "https://reddit.com/r/a/comments/abc", "action": "upvote"},
+            link="https://reddit.com/r/a/comments/abc",
+        )
+        second = db.enqueue_action(
+            "user2",
+            "upvote",
+            {"link": "https://reddit.com/r/b/comments/def", "action": "upvote"},
+            link="https://reddit.com/r/b/comments/def",
+        )
+        db.complete_queue_job(first["id"], success=False, error="first boom")
+        db.complete_queue_job(second["id"], success=False, error="second boom")
+
+        retried = db.retry_failed_jobs(account="user2")
+
+        assert [item["id"] for item in retried] == [second["id"]]
+        assert db.get_queue_job(first["id"])["status"] == "failed"
+        assert db.get_queue_job(second["id"])["status"] == "queued"
+
+    def test_schedule_status_and_delete(self, db):
+        db.register_schedule(
+            "daily-actions",
+            "Daily Actions",
+            source="agentctl",
+            rrule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            status="ACTIVE",
+        )
+
+        paused = db.set_schedule_status("daily-actions", "PAUSED")
+        assert paused["changed"] is True
+        assert paused["status"] == "PAUSED"
+
+        deleted = db.delete_schedule("daily-actions")
+        assert deleted["deleted"] is True
+        assert db.list_registered_schedules() == []
+
+    def test_daily_action_history_zero_fills_and_filters_account(self, db):
+        today = date.today().isoformat()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        db.conn.execute(
+            """INSERT INTO account_stats (account, action_date, action_count)
+               VALUES (?, ?, ?)""",
+            ("user1", yesterday, 2),
+        )
+        db.conn.execute(
+            """INSERT INTO account_stats (account, action_date, action_count)
+               VALUES (?, ?, ?)""",
+            ("user2", today, 7),
+        )
+        db.conn.commit()
+
+        history = db.get_daily_action_history(account="user1", days=3)
+
+        assert [row["action_count"] for row in history] == [0, 2, 0]
+        assert history[-1]["action_date"] == today

@@ -293,13 +293,20 @@ class BotDatabase:
         self,
         *,
         status: str | None = None,
+        account: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         query = "SELECT * FROM agent_queue"
         params: list[Any] = []
+        clauses: list[str] = []
         if status:
-            query += " WHERE status = ?"
+            clauses.append("status = ?")
             params.append(status)
+        if account:
+            clauses.append("account = ?")
+            params.append(account)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         cursor = self.conn.execute(query, params)
@@ -476,6 +483,78 @@ class BotDatabase:
         )
         self.conn.commit()
 
+    def retry_queue_job(self, job_id: int) -> dict[str, Any]:
+        """Re-queue a terminally failed queue job for one more worker attempt."""
+        now = self._now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = self.conn.execute("SELECT * FROM agent_queue WHERE id = ?", (job_id,))
+            row = cursor.fetchone()
+            if row is None:
+                self.conn.commit()
+                return {
+                    "id": job_id,
+                    "retried": False,
+                    "message": f"Queue job {job_id} was not found.",
+                }
+
+            job = dict(row)
+            if job["status"] != "failed":
+                self.conn.commit()
+                job["retried"] = False
+                job["message"] = f"Queue job {job_id} is {job['status']}; only failed jobs can be retried."
+                return job
+
+            if job.get("dedupe_key"):
+                duplicate = self.conn.execute(
+                    """SELECT id FROM agent_queue
+                       WHERE dedupe_key = ?
+                         AND status IN ('queued', 'running')
+                         AND id != ?
+                       LIMIT 1""",
+                    (job["dedupe_key"], job_id),
+                ).fetchone()
+                if duplicate is not None:
+                    self.conn.commit()
+                    job["retried"] = False
+                    job["message"] = f"An active duplicate job already exists for this request (job {duplicate['id']})."
+                    return job
+
+            max_attempts = job["max_attempts"]
+            if job["attempts"] >= job["max_attempts"]:
+                max_attempts = job["attempts"] + 1
+
+            self.conn.execute(
+                """UPDATE agent_queue
+                   SET status = 'queued',
+                       updated_at = ?,
+                       locked_by = NULL,
+                       locked_until = NULL,
+                       last_error = NULL,
+                       max_attempts = ?
+                   WHERE id = ?""",
+                (now, max_attempts, job_id),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+        updated = self.get_queue_job(job_id) or {"id": job_id}
+        updated["retried"] = True
+        updated["message"] = f"Queue job {job_id} was re-queued."
+        return updated
+
+    def retry_failed_jobs(self, account: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT id FROM agent_queue WHERE status = 'failed'"
+        params: list[Any] = []
+        if account:
+            query += " AND account = ?"
+            params.append(account)
+        query += " ORDER BY id"
+        rows = self.conn.execute(query, params).fetchall()
+        return [self.retry_queue_job(row["id"]) for row in rows]
+
     # ─── Account limits and atomic quota reservations ────────────
 
     def set_account_limit(
@@ -630,6 +709,32 @@ class BotDatabase:
         params.append(limit)
         cursor = self.conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
+
+    def get_daily_action_history(
+        self,
+        *,
+        account: str | None = None,
+        days: int = 30,
+    ) -> list[dict[str, Any]]:
+        days = max(1, int(days))
+        end = date.today()
+        start = end - timedelta(days=days - 1)
+        query = """SELECT action_date, SUM(action_count) AS action_count
+                   FROM account_stats
+                   WHERE action_date >= ? AND action_date <= ?"""
+        params: list[Any] = [start.isoformat(), end.isoformat()]
+        if account:
+            query += " AND account = ?"
+            params.append(account)
+        query += " GROUP BY action_date"
+        rows = {row["action_date"]: row["action_count"] for row in self.conn.execute(query, params).fetchall()}
+        return [
+            {
+                "action_date": (start + timedelta(days=offset)).isoformat(),
+                "action_count": int(rows.get((start + timedelta(days=offset)).isoformat(), 0)),
+            }
+            for offset in range(days)
+        ]
 
     # ─── Resource leases ────────────────────────────────────────
 
@@ -835,6 +940,48 @@ class BotDatabase:
             (status_expr, next_run_at, last_run_at, error, now, schedule_id),
         )
         self.conn.commit()
+
+    def get_schedule(self, schedule_id: str) -> dict[str, Any] | None:
+        cursor = self.conn.execute(
+            "SELECT * FROM schedule_registry WHERE id = ?",
+            (schedule_id,),
+        )
+        return self._row_to_dict(cursor.fetchone())
+
+    def set_schedule_status(self, schedule_id: str, status: str) -> dict[str, Any]:
+        normalized = status.strip().upper()
+        if normalized not in {"ACTIVE", "PAUSED"}:
+            raise ValueError("Schedule status must be ACTIVE or PAUSED.")
+
+        now = self._now_iso()
+        cursor = self.conn.execute(
+            """UPDATE schedule_registry
+               SET status = ?,
+                   updated_at = ?,
+                   locked_by = NULL,
+                   locked_until = NULL
+               WHERE id = ?""",
+            (normalized, now, schedule_id),
+        )
+        self.conn.commit()
+        schedule = self.get_schedule(schedule_id) or {"id": schedule_id, "status": normalized}
+        schedule["changed"] = cursor.rowcount > 0
+        schedule["message"] = (
+            f"Schedule {schedule_id} set to {normalized}." if cursor.rowcount > 0 else f"Schedule {schedule_id} was not found."
+        )
+        return schedule
+
+    def delete_schedule(self, schedule_id: str) -> dict[str, Any]:
+        existing = self.get_schedule(schedule_id)
+        cursor = self.conn.execute(
+            "DELETE FROM schedule_registry WHERE id = ?",
+            (schedule_id,),
+        )
+        self.conn.commit()
+        schedule = existing or {"id": schedule_id}
+        schedule["deleted"] = cursor.rowcount > 0
+        schedule["message"] = f"Schedule {schedule_id} deleted." if cursor.rowcount > 0 else f"Schedule {schedule_id} was not found."
+        return schedule
 
     # ─── Chrome profile account associations ────────────────────
 

@@ -631,6 +631,36 @@ def command_schedules_register(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_schedules_set_status(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    try:
+        schedule = db.set_schedule_status(args.id, args.status)
+        payload = {
+            "schedule": schedule,
+            "changed": bool(schedule.get("changed")),
+            "schedules": db.list_registered_schedules(),
+        }
+    finally:
+        db.close()
+    _print_json(payload)
+    return 0
+
+
+def command_schedules_delete(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    try:
+        deleted = db.delete_schedule(args.id)
+        payload = {
+            "schedule": deleted,
+            "deleted": bool(deleted.get("deleted")),
+            "schedules": db.list_registered_schedules(),
+        }
+    finally:
+        db.close()
+    _print_json(payload)
+    return 0
+
+
 def _run_due_schedules(args: argparse.Namespace) -> dict[str, Any]:
     worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}"
     now = _parse_dt(args.now) if args.now else utc_now()
@@ -1109,7 +1139,11 @@ def command_queue_list(args: argparse.Namespace) -> int:
     try:
         payload = {
             "queueCounts": db.get_queue_counts(),
-            "jobs": db.list_queue_jobs(status=args.status, limit=args.limit),
+            "jobs": db.list_queue_jobs(
+                status=args.status,
+                account=getattr(args, "account", "") or None,
+                limit=args.limit,
+            ),
         }
     finally:
         db.close()
@@ -1124,6 +1158,24 @@ def command_queue_recover_stale(args: argparse.Namespace) -> int:
         payload = {
             "recovered": len(recovered),
             "jobs": recovered,
+            "queueCounts": db.get_queue_counts(),
+        }
+    finally:
+        db.close()
+    _print_json(payload)
+    return 0
+
+
+def command_queue_retry(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    try:
+        if args.id is not None:
+            retried = [db.retry_queue_job(args.id)]
+        else:
+            retried = db.retry_failed_jobs(account=args.account or None)
+        payload = {
+            "retried": retried,
+            "count": sum(1 for item in retried if item.get("retried")),
             "queueCounts": db.get_queue_counts(),
         }
     finally:
@@ -1457,6 +1509,18 @@ def build_parser() -> argparse.ArgumentParser:
     schedules_run_parser.add_argument("--verbose", action="store_true")
     schedules_run_parser.set_defaults(func=command_schedules_run_due)
 
+    schedules_status_parser = schedules_subparsers.add_parser("set-status")
+    schedules_status_parser.add_argument("--id", required=True)
+    schedules_status_parser.add_argument(
+        "--status",
+        required=True,
+        choices=["ACTIVE", "PAUSED", "active", "paused"],
+    )
+    schedules_status_parser.set_defaults(func=command_schedules_set_status)
+    schedules_delete_parser = schedules_subparsers.add_parser("delete")
+    schedules_delete_parser.add_argument("--id", required=True)
+    schedules_delete_parser.set_defaults(func=command_schedules_delete)
+
     executor_parser = subparsers.add_parser("executor")
     executor_subparsers = executor_parser.add_subparsers(dest="executor_command", required=True)
     executor_status_parser = executor_subparsers.add_parser("status")
@@ -1508,11 +1572,18 @@ def build_parser() -> argparse.ArgumentParser:
     queue_submit_parser.set_defaults(func=command_queue_submit)
     queue_list_parser = queue_subparsers.add_parser("list")
     queue_list_parser.add_argument("--status", default=None)
+    queue_list_parser.add_argument("--account", default="")
     queue_list_parser.add_argument("--limit", type=int, default=100)
     queue_list_parser.set_defaults(func=command_queue_list)
     queue_recover_parser = queue_subparsers.add_parser("recover-stale")
     queue_recover_parser.add_argument("--now", default="")
     queue_recover_parser.set_defaults(func=command_queue_recover_stale)
+    queue_retry_parser = queue_subparsers.add_parser("retry")
+    queue_retry_group = queue_retry_parser.add_mutually_exclusive_group(required=True)
+    queue_retry_group.add_argument("--id", type=int)
+    queue_retry_group.add_argument("--all", action="store_true")
+    queue_retry_parser.add_argument("--account", default="")
+    queue_retry_parser.set_defaults(func=command_queue_retry)
     queue_worker_parser = queue_subparsers.add_parser("worker")
     queue_worker_parser.add_argument("--worker-id", default="")
     queue_worker_parser.add_argument("--lease-seconds", type=int, default=600)
