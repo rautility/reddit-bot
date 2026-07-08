@@ -20,6 +20,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from bot import agentctl, tool_cli
 from bot.action_schema import describe_actions, validate_action_fields
+from bot.control.schedules import parse_dtstart as _parse_dtstart
+from bot.control.schedules import parse_rrule_text as _parse_rrule_text
+from bot.control.schedules import slugify
 from bot.database import BotDatabase
 from bot.utils.clock import utc_now
 
@@ -54,34 +57,6 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def _parse_rrule_text(rrule_text: str) -> dict[str, str]:
-    parts: dict[str, str] = {}
-    for raw_line in (rrule_text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("DTSTART"):
-            _, value = line.split(":", 1)
-            parts["DTSTART"] = value
-            continue
-        if line.startswith("RRULE:"):
-            line = line.removeprefix("RRULE:")
-        for token in line.split(";"):
-            if "=" in token:
-                key, value = token.split("=", 1)
-                parts[key.upper()] = value
-    return parts
-
-
-def _parse_dtstart(value: str) -> datetime | None:
-    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M", "%Y%m%d"):
-        try:
-            return datetime.strptime(value, fmt)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
 def human_cadence(rrule_text: str) -> str:
     parts = _parse_rrule_text(rrule_text)
     freq = parts.get("FREQ", "").upper()
@@ -101,11 +76,6 @@ def human_cadence(rrule_text: str) -> str:
             return f"Weekly on {day_text} at {int(hour):02d}:{int(minute or 0):02d}"
         return f"Weekly on {day_text}"
     return rrule_text or "No cadence"
-
-
-def _slugify(value: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.lower()).strip("-")
-    return (slug or "reddit-task")[:64].strip("-")
 
 
 def _identity_args(identity: dict[str, Any], *, schedule: bool = False) -> list[str]:
@@ -416,7 +386,7 @@ class RedditUIHandler(BaseHTTPRequestHandler):
         rrule, next_run_at = _build_schedule_rule(timing)
         timestamp = utc_now().strftime("%Y%m%dT%H%M%S")
         name = str(body.get("name") or f"{action} task {timestamp}")
-        schedule_id = str(body.get("id") or f"reddit-ui-{_slugify(name)}-{timestamp}")
+        schedule_id = str(body.get("id") or f"reddit-ui-{slugify(name, max_length=64)}-{timestamp}")
         self.actions_dir.mkdir(parents=True, exist_ok=True)
         action_file = self.actions_dir / f"{schedule_id}-{uuid.uuid4().hex[:8]}.json"
         scheduled_fields = {key: value for key, value in fields.items() if key != "query"}

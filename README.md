@@ -5,6 +5,7 @@
 ### A feature-rich Reddit automation bot using Selenium
 
 ![Python Versions](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)
+![CI](https://github.com/markmelnic/reddit-bot/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
 </div>
@@ -101,9 +102,11 @@
 
 ### Standard Installation
 
+Requires Python 3.10 or newer.
+
 ```bash
-git clone https://github.com/markmelnic/Reddit-Bot
-cd Reddit-Bot
+git clone https://github.com/markmelnic/reddit-bot
+cd reddit-bot
 pip install -e .
 ```
 
@@ -113,11 +116,10 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
-### Preferred Local Workflow With uv
+or with uv:
 
 ```bash
 uv sync --extra dev
-uv run pytest -q
 ```
 
 ### Docker Installation
@@ -857,20 +859,23 @@ Run the test suite:
 pip install -e ".[dev]"
 
 # Run all tests
-pytest tests/ -v
+make test
+
+# Run all tests through uv
+uv run pytest -q
 
 # Run tests with the CI coverage report
 pytest tests/ -q --cov=bot --cov=main --cov=args --cov-report=term-missing
 
 # Run specific test module
-pytest tests/test_config.py -v
-pytest tests/test_database.py -v
+pytest tests/test_config.py -q
+pytest tests/test_database.py -q
 ```
 
 Current coverage baseline: 63% total statement coverage from the CI coverage command.
 
 ```text
-TOTAL 5371 statements, 1993 missed, 63% covered
+TOTAL 5365 statements, 1971 missed, 63% covered
 ```
 
 Tests cover:
@@ -905,6 +910,9 @@ reddit-bot/
 │   ├── tool_cli.py            # Human-friendly reddit-tool CLI and JSON envelope
 │   ├── skills_sync.py         # .claude -> .codex skill mirror utility
 │   ├── reporting.py           # Summary, durable structured logging, webhooks
+│   ├── control/               # Shared control-plane helpers
+│   │   ├── errors.py          # CLI exception types
+│   │   └── schedules.py       # RRULE, cadence, and schedule ID helpers
 │   ├── actions/               # Plugin-based action system
 │   │   ├── base.py            # BaseAction ABC and ActionResult
 │   │   ├── registry.py        # Action name -> class mapping
@@ -917,21 +925,22 @@ reddit-bot/
 │   │   ├── dm.py              # Direct messages
 │   │   ├── follow.py          # Follow/unfollow users
 │   │   └── profile.py         # Update bio
-│   └── utils/                 # Shared utilities
-│       ├── chrome_extension_bridge.py # Reddit healer extension bridge
-│       ├── chromedriver.py    # ChromeDriver resolution helper
-│       ├── clock.py           # UTC timestamp helpers
-│       ├── timeouts.py        # Randomized delays
-│       ├── retry.py           # Exponential backoff decorator
-│       ├── mouse.py           # Bezier curve mouse movement
-│       ├── self_healing.py    # Runtime selector healing
-│       ├── visible_vote.py    # Visible vote control diagnostics/clicking
-│       ├── user_agents.py     # UA string rotation
-│       ├── credentials.py     # Account parsing and encryption
-│       ├── input_parser.py    # Action file parsing
-│       ├── validators.py      # URL validation
-│       └── proxy.py           # Proxy loading and rotation
+│   ├── utils/                 # Shared utilities
+│   │   ├── chrome_extension_bridge.py # Reddit healer extension bridge
+│   │   ├── chromedriver.py    # ChromeDriver resolution helper
+│   │   ├── clock.py           # UTC timestamp helpers
+│   │   ├── timeouts.py        # Randomized delays
+│   │   ├── retry.py           # Exponential backoff decorator
+│   │   ├── mouse.py           # Bezier curve mouse movement
+│   │   ├── self_healing.py    # Runtime selector healing
+│   │   ├── visible_vote.py    # Visible vote control diagnostics/clicking
+│   │   ├── user_agents.py     # UA string rotation
+│   │   ├── credentials.py     # Account parsing and encryption
+│   │   ├── input_parser.py    # Action file parsing
+│   │   ├── validators.py      # URL validation
+│   │   └── proxy.py           # Proxy loading and rotation
 │   └── web/                   # Localhost-only dashboard server
+│       └── server.py          # API and static file server
 ├── chrome_extension/          # Reddit healer Chrome extension
 ├── docs/                      # Agent operations, scheduling, UI, and maintenance docs
 ├── scripts/                   # Thin CLI launchers and diagnostics
@@ -985,7 +994,7 @@ from .my_action import MyCustomAction
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/new-action`)
 3. Write tests for any new functionality
-4. Run the test suite (`pytest tests/ -v`)
+4. Run the test suite (`make test`)
 5. Commit your changes
 6. Push to your branch
 7. Open a Pull Request

@@ -15,13 +15,14 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from bot.config import BotConfig
+from bot.control import schedules as schedule_control
 from bot.database import BotDatabase
 from bot.reporting import setup_structured_logger
 from bot.utils.clock import utc_now
@@ -38,8 +39,13 @@ EXECUTOR_DIR = REPO_ROOT / ".agent-executor"
 EXECUTOR_PID_PATH = EXECUTOR_DIR / "executor.pid"
 EXECUTOR_LOG_PATH = EXECUTOR_DIR / "executor.log"
 EXECUTOR_LABEL = "com.raul.reddit-bot.agentctl-scheduler"
-WEEKDAY_INDEX = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 CANONICAL_POST_ACTIONS = {"upvote", "downvote", "comment", "save", "hide", "award"}
+
+WEEKDAY_INDEX = schedule_control.WEEKDAY_INDEX
+_parse_dt = schedule_control.parse_dt
+_parse_dtstart = schedule_control.parse_dtstart
+_parse_rrule_text = schedule_control.parse_rrule_text
+_next_run_after = schedule_control.next_run_after
 
 
 def _print_json(payload: Any) -> None:
@@ -59,83 +65,6 @@ def _launch_agents_dir() -> Path:
 
 def _launch_agent_path() -> Path:
     return _launch_agents_dir() / f"{EXECUTOR_LABEL}.plist"
-
-
-def _parse_dt(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
-
-
-def _parse_rrule_text(rrule_text: str) -> dict[str, str]:
-    parts: dict[str, str] = {}
-    for raw_line in (rrule_text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("DTSTART"):
-            _, value = line.split(":", 1)
-            parts["DTSTART"] = value
-            continue
-        if line.startswith("RRULE:"):
-            line = line.removeprefix("RRULE:")
-        for token in line.split(";"):
-            if "=" in token:
-                key, value = token.split("=", 1)
-                parts[key.upper()] = value
-    return parts
-
-
-def _parse_dtstart(value: str) -> datetime | None:
-    if not value:
-        return None
-    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M", "%Y%m%d"):
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            continue
-    return None
-
-
-def _next_run_after(
-    rrule_text: str,
-    after: datetime,
-    previous_runs: int = 0,
-) -> datetime | None:
-    parts = _parse_rrule_text(rrule_text)
-    freq = parts.get("FREQ", "").upper()
-    count = int(parts["COUNT"]) if parts.get("COUNT", "").isdigit() else None
-    if count is not None and previous_runs >= count:
-        return None
-
-    dtstart = _parse_dtstart(parts.get("DTSTART", "")) or after
-    hour = int(parts.get("BYHOUR", dtstart.hour))
-    minute = int(parts.get("BYMINUTE", dtstart.minute))
-    second = int(parts.get("BYSECOND", dtstart.second))
-
-    if freq == "DAILY":
-        candidate = after.replace(hour=hour, minute=minute, second=second, microsecond=0)
-        if candidate <= after:
-            candidate += timedelta(days=1)
-        return max(candidate, dtstart)
-
-    if freq == "WEEKLY":
-        bydays = parts.get("BYDAY")
-        weekdays = [WEEKDAY_INDEX[day] for day in bydays.split(",") if day in WEEKDAY_INDEX] if bydays else [dtstart.weekday()]
-        candidates = []
-        base_date = after.date()
-        for offset in range(0, 8):
-            day = base_date + timedelta(days=offset)
-            if day.weekday() not in weekdays:
-                continue
-            candidate = datetime.combine(day, datetime.min.time()).replace(
-                hour=hour,
-                minute=minute,
-                second=second,
-            )
-            if candidate > after and candidate >= dtstart:
-                candidates.append(candidate)
-        return min(candidates) if candidates else None
-
-    raise ValueError(f"Unsupported schedule frequency: {freq or '<missing>'}")
 
 
 def _load_config(args: argparse.Namespace) -> BotConfig:

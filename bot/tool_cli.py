@@ -6,7 +6,6 @@ import argparse
 import contextlib
 import io
 import json
-import re
 import subprocess
 import sys
 import time
@@ -33,6 +32,8 @@ from bot.agentctl import (
     REPO_ROOT,
 )
 from bot.config import BotConfig
+from bot.control import schedules as schedule_control
+from bot.control.errors import CliError
 from bot.database import BotDatabase
 from bot.utils.clock import utc_now
 from bot.utils.input_parser import VALID_ACTIONS, parse_links_file
@@ -40,7 +41,6 @@ from bot.utils.input_parser import VALID_ACTIONS, parse_links_file
 DEFAULT_REDDIT_USER = "u/Particular-Arm2102"
 DEFAULT_ACTIONS_DIR = REPO_ROOT / ".agent-actions"
 ERROR_KEYWORDS = ("error", "failed", "exception", "traceback")
-WEEKDAYS = {"MO", "TU", "WE", "TH", "FR", "SA", "SU"}
 # Transport fields an agent can pass inline to `do`, mirroring ActionEntry.
 INLINE_ACTION_FIELDS = (
     "link",
@@ -54,6 +54,13 @@ INLINE_ACTION_FIELDS = (
 )
 QUERY_ACTIONS = {name for name, spec in ACTION_SCHEMA.items() if spec.get("link_kind") == "query"}
 
+WEEKDAYS = schedule_control.WEEKDAYS
+_normalize_weekdays = schedule_control.normalize_weekdays
+_parse_at = schedule_control.parse_at
+_parse_time = schedule_control.parse_time
+_schedule_rule = schedule_control.schedule_rule
+_slugify = schedule_control.slugify
+
 
 def _envelope(command: str, *, data: Any = None, ok: bool = True, error: Any = None) -> dict[str, Any]:
     """Wrap a command result in the stable, versioned response contract."""
@@ -64,10 +71,6 @@ def _envelope(command: str, *, data: Any = None, ok: bool = True, error: Any = N
         "data": data if data is not None else {},
         "error": error,
     }
-
-
-class CliError(RuntimeError):
-    """Raised for user-correctable CLI errors."""
 
 
 def _truncate(value: Any, width: int = 54) -> str:
@@ -406,67 +409,6 @@ def command_schedule_list(args: argparse.Namespace) -> int:
     else:
         _print_schedule_list(payload, limit=args.limit, include_all_codex=args.all_codex)
     return 0
-
-
-def _slugify(value: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.lower()).strip("-")
-    return (slug or "reddit-task")[:60].strip("-")
-
-
-def _parse_time(value: str) -> tuple[int, int]:
-    match = re.fullmatch(r"(\d{1,2}):(\d{2})", value.strip())
-    if not match:
-        raise CliError("Time must use HH:MM format, for example 09:30.")
-    hour = int(match.group(1))
-    minute = int(match.group(2))
-    if hour > 23 or minute > 59:
-        raise CliError("Time must be a valid 24-hour HH:MM value.")
-    return hour, minute
-
-
-def _parse_at(value: str) -> datetime:
-    normalized = value.strip().replace(" ", "T")
-    try:
-        return datetime.fromisoformat(normalized)
-    except ValueError as exc:
-        raise CliError("Use an ISO datetime for --at, for example 2026-07-06T09:00:00.") from exc
-
-
-def _normalize_weekdays(value: str) -> str:
-    days = [day.strip().upper() for day in value.split(",") if day.strip()]
-    invalid = [day for day in days if day not in WEEKDAYS]
-    if invalid:
-        raise CliError(f"Invalid weekday(s): {', '.join(invalid)}. Use MO,TU,WE,TH,FR,SA,SU.")
-    if not days:
-        raise CliError("--weekly requires at least one weekday.")
-    return ",".join(days)
-
-
-def _schedule_rule(args: argparse.Namespace) -> tuple[str, str]:
-    supplied = [
-        bool(args.rrule),
-        bool(args.at),
-        bool(args.daily_at),
-        bool(args.weekly),
-    ]
-    if sum(supplied) != 1:
-        raise CliError("Choose exactly one schedule option: --rrule, --at, --daily-at, or --weekly.")
-
-    if args.rrule:
-        return args.rrule, args.next_run_at or ""
-
-    if args.at:
-        at = _parse_at(args.at)
-        dtstart = at.strftime("%Y%m%dT%H%M%S")
-        return f"DTSTART:{dtstart}\nRRULE:FREQ=DAILY;COUNT=1", at.isoformat()
-
-    if args.daily_at:
-        hour, minute = _parse_time(args.daily_at)
-        return f"FREQ=DAILY;BYHOUR={hour};BYMINUTE={minute}", args.next_run_at or ""
-
-    hour, minute = _parse_time(args.time)
-    weekdays = _normalize_weekdays(args.weekly)
-    return f"FREQ=WEEKLY;BYDAY={weekdays};BYHOUR={hour};BYMINUTE={minute}", args.next_run_at or ""
 
 
 def _action_line(args: argparse.Namespace) -> str:
