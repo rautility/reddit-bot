@@ -7,7 +7,6 @@ from selenium.webdriver.common.by import By
 from bot.actions.comment import CommentAction
 from bot.config import BotConfig
 
-
 LINK = "https://www.reddit.com/r/test/comments/abc/slug/"
 
 

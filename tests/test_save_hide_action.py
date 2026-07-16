@@ -6,7 +6,6 @@ from selenium.common.exceptions import WebDriverException
 from bot.actions.save_hide import HideAction, SaveAction
 from bot.config import BotConfig
 
-
 LINK = "https://www.reddit.com/r/test/comments/abc/slug/"
 
 
