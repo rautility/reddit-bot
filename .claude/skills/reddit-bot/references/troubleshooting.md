@@ -23,9 +23,14 @@ Start with `doctor` when the question is “why can’t I act?”. Soft check fa
 needs. Run `capabilities` and supply it. Example: `comment` needs `--comment`,
 `dm` needs `--recipient` and `--message`.
 
-**`linkErrors` / share link rejected.** A post action got a non-canonical URL.
-Open the `/r/<sub>/s/<id>` share link in the saved Chrome profile, copy the
-resulting `/comments/` URL, and retry.
+**`linkErrors` / share link rejected.** A post action got a non-canonical URL
+(share shortlinks are rejected by default). Resolve first, then retry:
+
+```bash
+$TOOL resolve-url --link "https://www.reddit.com/r/<sub>/s/<id>" --json
+```
+
+Use the returned `data.output` canonical `/comments/` URL.
 
 **Unknown Reddit username association.** The `--reddit-user` isn't linked to a
 profile yet. Associate it (see `references/chrome-profiles.md`) or pass

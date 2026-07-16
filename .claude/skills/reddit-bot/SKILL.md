@@ -24,6 +24,7 @@ Add `--json` to any command for a machine-readable, versioned envelope
 
 ```bash
 $TOOL capabilities            # actions, required fields per action, URL rule, defaults, live quota
+$TOOL resolve-url --link "<url>"   # share shortlink → canonical /comments/ URL
 ```
 
 This is the source of truth for which fields each action needs. Never guess fields.
@@ -47,7 +48,8 @@ $TOOL external-search-upvote --query "best Excel tips" --json
 - Live worker runs preflight the resolved Chrome debugger and opens the saved
   profile when needed. Use `--no-profile-preflight` only for diagnostics.
 - Post actions require a **canonical** `/comments/` URL. Share links
-  (`/r/<sub>/s/<id>`) are rejected — resolve them first.
+  (`/r/<sub>/s/<id>`) are rejected by default — resolve first:
+  `$TOOL resolve-url --link "<share_url>"` (use the `output` field).
 
 For scheduled search-then-upvote work, register the compound action directly:
 

@@ -35,6 +35,7 @@ from bot.config import BotConfig
 from bot.control import doctor as doctor_control
 from bot.control import schedules as schedule_control
 from bot.control.errors import CliError
+from bot.control.resolve import resolve_reddit_url
 from bot.database import BotDatabase
 from bot.utils.clock import utc_now
 from bot.utils.input_parser import VALID_ACTIONS, parse_links_file
@@ -1091,9 +1092,53 @@ def _print_capabilities(payload: dict[str, Any]) -> None:
             ["account", "action", "quota"],
             [[i.get("account"), i.get("action"), i.get("daily_action_quota")] for i in limits],
         )
+    print("\nResolve share shortlinks (rejected by queue submit by default):")
+    print("  reddit-tool resolve-url --link <share_or_post_url>")
     print("\nRun one action end to end:")
     print("  reddit-tool do --action upvote --link <post_url>")
     print("  reddit-tool search-upvote --query <search_query>")
+
+
+def _print_resolve_url(payload: dict[str, Any]) -> None:
+    data = payload.get("data", {})
+    print("Resolve URL" + ("" if payload.get("ok") else " (failed)"))
+    _print_kv(
+        [
+            ("ok", payload.get("ok")),
+            ("input", data.get("input")),
+            ("output", data.get("output")),
+            ("resolved", data.get("resolved")),
+            ("kind", data.get("kind")),
+        ]
+    )
+    if payload.get("error"):
+        print(f"\nerror: {payload['error']}")
+
+
+def command_resolve_url(args: argparse.Namespace) -> int:
+    """Convert a Reddit share shortlink to a canonical /comments/ URL."""
+    try:
+        data = resolve_reddit_url(
+            args.link,
+            timeout=float(getattr(args, "timeout", 15.0) or 15.0),
+        )
+    except CliError as exc:
+        payload = _envelope(
+            "resolve-url",
+            ok=False,
+            error=str(exc),
+            data={
+                "input": (args.link or "").strip(),
+                "output": None,
+                "resolved": False,
+                "kind": None,
+            },
+        )
+        _json_or_table(args, payload, _print_resolve_url)
+        return 2
+
+    payload = _envelope("resolve-url", data=data)
+    return _json_or_table(args, payload, _print_resolve_url)
 
 
 def command_capabilities(args: argparse.Namespace) -> int:
@@ -1109,6 +1154,7 @@ def command_capabilities(args: argparse.Namespace) -> int:
     }
     data["howToRun"] = {
         "oneShot": "reddit-tool do --action <action> --link <url> [field flags]",
+        "resolveShareUrl": "reddit-tool resolve-url --link <share_or_post_url>",
         "searchUpvote": "reddit-tool search-upvote --query <search query>",
         "externalSearchUpvote": ("reddit-tool external-search-upvote --query <search query> [--subreddit <name>] --json"),
         "queueOnly": "reddit-tool queue add --links <file>",
@@ -2078,6 +2124,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     describe_parser.add_argument("action_name", nargs="?", help="Action name to describe.")
     describe_parser.set_defaults(func=command_capabilities, command_name="describe")
+
+    resolve_url_parser = subparsers.add_parser(
+        "resolve-url",
+        help="Resolve a Reddit /r/.../s/... share shortlink to a canonical /comments/ URL.",
+    )
+    resolve_url_parser.add_argument(
+        "--link",
+        required=True,
+        help="Reddit URL (share shortlink or already-canonical post URL).",
+    )
+    resolve_url_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+        help="HTTP timeout in seconds when following share redirects (default: 15).",
+    )
+    resolve_url_parser.set_defaults(func=command_resolve_url)
 
     do_parser = subparsers.add_parser(
         "do",

@@ -165,9 +165,10 @@ https://www.reddit.com/r/<subreddit>/comments/<post_id>/<slug>/
 ```
 
 Do not submit Reddit share shortlinks like `/r/<subreddit>/s/<share_id>`.
-`agentctl queue submit` and `agentctl schedules register` reject them before
-they can enter the queue. Resolve shortlinks first, then schedule the canonical
-`/comments/` URL.
+`agentctl queue submit` and `agentctl schedules register` reject them by
+default before they can enter the queue. Resolve shortlinks first with
+`reddit-tool resolve-url --link <share_url>` (JSON: `{input, output, resolved,
+kind}`), then schedule/submit the canonical `/comments/` URL.
 
 ## Quotas And Limits
 

@@ -23,7 +23,13 @@ POST_URL_FORMAT = "https://www.reddit.com/r/<subreddit>/comments/<post_id>/<slug
 URL_CONTRACT = {
     "postActions": sorted(["upvote", "downvote", "comment", "save", "hide", "crosspost"]),
     "canonicalFormat": POST_URL_FORMAT,
-    "rejects": "Reddit share shortlinks like /r/<subreddit>/s/<share_id>. Resolve them to the canonical /comments/ URL before submitting.",
+    "rejects": (
+        "Reddit share shortlinks like /r/<subreddit>/s/<share_id> are rejected by "
+        "default on queue submit / schedule register. Run "
+        "`reddit-tool resolve-url --link <share_url>` first (or use optional "
+        "--resolve-share when available), then submit the canonical /comments/ URL."
+    ),
+    "resolveCommand": "reddit-tool resolve-url --link <url> [--json]",
 }
 
 # What each transport field means, so an agent never has to read prose to build

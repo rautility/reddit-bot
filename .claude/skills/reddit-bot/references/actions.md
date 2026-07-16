@@ -65,6 +65,10 @@ $TOOL queue retry --all --account "Particular-Arm2102"
 ## URL contract
 
 Post actions require `https://www.reddit.com/r/<subreddit>/comments/<post_id>/<slug>/`.
-Share shortlinks (`/r/<sub>/s/<id>`) are rejected at submit time; resolve them to
-the canonical `/comments/` URL first (open the share link in the saved profile and
-copy the resulting address).
+Share shortlinks (`/r/<sub>/s/<id>`) are rejected by default at submit time.
+Resolve them first (no browser needed):
+
+```bash
+$TOOL resolve-url --link "https://www.reddit.com/r/<sub>/s/<id>" --json
+# use data.output (canonical /comments/ URL) when ok is true
+```
