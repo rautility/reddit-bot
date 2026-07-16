@@ -1,3 +1,8 @@
+# Legacy headless batch image only.
+# Runs main.py --headless for password/cookie multi-account jobs.
+# NOT for saved Chrome debug-profile attach, agentctl queue, or day-to-day
+# agent operation on a local Mac. Prefer the control plane documented in
+# README.md and AGENTS.md (reddit-tool / agentctl + open-profile).
 FROM python:3.11-slim
 
 # Install Chrome

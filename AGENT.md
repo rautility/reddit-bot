@@ -5,20 +5,37 @@ queueing, leases, quotas, and schedule checks. This file keeps the saved Chrome
 profile workflow close at hand for agents that still look for singular
 `AGENT.md`.
 
+**Primary path:** saved Chrome debug profile + queue / `reddit-tool do`.
+**Legacy:** `main.py` password/cookie batch and Docker headless — owner only.
+
 ## Agent Control Plane
 
 Before scheduling or running work, inspect shared state:
 
 ```bash
 .venv/bin/python scripts/agentctl.py status
+.venv/bin/python scripts/reddit_tool.py doctor --json
 ```
 
-For live Reddit mutations initiated by agents, submit actions through the queue:
+One action end to end (preferred for a single mutation):
+
+```bash
+.venv/bin/python scripts/reddit_tool.py do \
+  --action upvote \
+  --link "https://www.reddit.com/r/example/comments/abc/title/" \
+  --reddit-user "u/Particular-Arm2102"
+```
+
+For multi-action files, submit through the queue:
 
 ```bash
 .venv/bin/python scripts/agentctl.py queue submit --reddit-user "u/Particular-Arm2102" --links links.txt
 .venv/bin/python scripts/agentctl.py queue worker --once
 ```
+
+Identity can be omitted when a sole profile association exists, or when
+`REDDIT_BOT_DEFAULT_USER` matches an association. Share shortlinks must be
+resolved first: `reddit-tool resolve-url --link <url>`.
 
 For scheduled live Reddit actions, register a project-owned schedule with
 `agentctl schedules register --links ...`, then wake the project executor with
@@ -27,7 +44,7 @@ click, vote, search, or call `main.py` directly unless Raul explicitly asks for
 that exception.
 
 Do not create separate lock files, schedulers, or rate limiters. Use the SQLite
-coordination mechanisms exposed by `agentctl`.
+(WAL) coordination mechanisms exposed by `agentctl`.
 
 ## Default Browser Workflow
 

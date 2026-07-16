@@ -46,8 +46,12 @@ All findings below were verified against the working tree on 2026-07-07
 `docs/local-ui-plan.md`, `.claude/skills/`, `.codex/skills/reddit-bot/`, and
 seven test files. On top of that, 27 tracked files carry uncommitted
 modifications. A `git clean`/reclone loses all of it, and other branches can't
-see it: the `codex/local-ui` worktree (at `.worktrees/local-ui`, based on
-`master`) is missing the very backend the UI plan builds on.
+see it: the `codex/local-ui` worktree (historically at `.worktrees/local-ui`,
+based on an older `master`) was missing the backend the UI plan builds on.
+**Note (2026-07):** the local UI has landed on `master` (`bot/web/`, `web/`,
+`docs/local-ui.md`, `make ui`). Any leftover `.worktrees/local-ui` directory is
+stale historical context only — do not treat it as the source of truth, and do
+not delete worktrees unless Raul confirms.
 
 **Tasks.**
 

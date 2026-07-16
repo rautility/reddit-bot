@@ -2,13 +2,21 @@
 
 # Reddit Bot
 
-### A feature-rich Reddit automation bot using Selenium
+### Selenium automation with a queue-first control plane and saved Chrome debug profiles
 
 ![Python Versions](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)
 ![CI](https://github.com/markmelnic/reddit-bot/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
 </div>
+
+**How this repo is actually operated:** live Reddit mutations go through a
+**saved Chrome debug profile** + **SQLite queue/worker** (`agentctl` /
+`reddit-tool`). Password/cookie batch runs via `main.py` and Docker headless
+are a **legacy / owner escape hatch**, not the agent or day-to-day path.
+
+Agent runbook: [`AGENTS.md`](AGENTS.md). Skill fast path: `.claude/skills/reddit-bot/`
+(mirrored to `.codex/skills/reddit-bot/`).
 
 ---
 
@@ -23,11 +31,10 @@
 - [Supported Actions](#supported-actions)
 - [Anti-Detection](#anti-detection)
 - [Orchestration](#orchestration)
-- [Agentic Operation](#agentic-operation)
 - [Credentials & Security](#credentials--security)
 - [Reporting & Notifications](#reporting--notifications)
 - [Database Tracking](#database-tracking)
-- [Docker](#docker)
+- [Docker (legacy batch)](#docker-legacy-batch)
 - [CLI Reference](#cli-reference)
 - [Testing](#testing)
 - [Architecture](#architecture)
@@ -36,6 +43,18 @@
 ---
 
 ## Features
+
+### Control plane (primary path)
+- **Queue + worker** — submit actions, lease Chrome profile/debug port, run one pass
+- **`reddit-tool do`** — one-shot: build action → queue submit → worker → result
+- **Saved Chrome debug profiles** — manually authenticated sessions; no scripted login
+- **Healer extension** — control discovery (confidence, bbox, state) before clicks
+- **`doctor`** — read-only diagnostics (DB, identity, DevTools, queue, executor)
+- **`resolve-url`** — convert `/r/.../s/...` share shortlinks to canonical `/comments/` URLs
+- **Schedules + executor** — project-owned RRULE schedules; macOS LaunchAgent wakeup
+- **Quotas & leases** — daily action quotas and profile leases in SQLite (WAL mode)
+- **Identity defaults** — sole DB association or `REDDIT_BOT_DEFAULT_USER`
+- **Local web UI** — `make ui` on `127.0.0.1:8765`; optional `REDDIT_BOT_UI_TOKEN` for writes
 
 ### Core Actions
 - **Upvote / Downvote** posts
@@ -47,54 +66,54 @@
 - **Crosspost** content to other subreddits
 - **Follow / Unfollow** users
 - **Update Profile** bio
+- **Human search / search-upvote** compound flows
 
 ### Reliability & Error Handling
 - **Retry logic with exponential backoff** — failed actions automatically retry up to 3 times with increasing delays (2s, 4s, 8s)
 - **Action verification** — checks DOM state after actions to confirm success (e.g., `aria-pressed` on vote buttons)
 - **Screenshot on failure** — captures a browser screenshot when an action fails, saved to `screenshots/` directory
 - **Graceful degradation** — if one action or account fails, the bot continues with the remaining work
+- **Queue retry** — requeue failed jobs via `agentctl queue retry`
 
 ### Anti-Detection
-- **Proxy support** — load a list of proxies and rotate them per account session
+- **Proxy support** — load a list of proxies and rotate them per account session (legacy batch)
 - **User-Agent rotation** — randomize the browser fingerprint with realistic Chrome UA strings
-- **Headless mode** — run without a visible browser window (`--headless`)
+- **Headless mode** — run without a visible browser window (`--headless`; legacy batch / Docker)
 - **Rate limiting** — configurable random delays between actions and between accounts
 - **Randomized action ordering** — shuffle the action list per account so each executes a unique sequence
 - **Human-like mouse movement** — move the cursor along Bezier curves before clicking elements
 - **Anti-automation flags** — disables `navigator.webdriver` and Chrome automation indicators
 
 ### Input & Configuration
-- **YAML config file** — store all settings in a `config.yaml` instead of CLI flags
-- **Multiple input formats** — pipe-delimited (`|`), CSV, and JSON for both accounts and action files
-- **Environment variable credentials** — read accounts from `REDDIT_ACCOUNT_1`, `REDDIT_ACCOUNT_2`, etc.
-- **Credential encryption** — encrypt account files at rest with a passphrase, decrypt at runtime
-- **URL validation** — validates that links are actual Reddit URLs before attempting actions
+- **YAML config file** — store attach-mode and batch settings in `config.yaml`
+- **Action files** — pipe-delimited (`|`), CSV, and JSON for queue submit / schedules
+- **URL validation** — rejects non-Reddit and share shortlinks on queue/schedule submit
+- **Accounts-file credentials** — password/cookie batch path remains available as legacy (see below)
 
 ### Orchestration
-- **Scheduled execution** — run on a cron-like schedule (e.g., every 6 hours)
-- **Staggered account switching** — configurable random delays between accounts
-- **Daily action quotas** — limit the number of actions per account per day
-- **Parallel accounts** — run multiple browser instances concurrently
-- **Session persistence** — save and restore browser cookies between runs to avoid repeated logins
+- **Project schedules** — register RRULE work with `agentctl schedules register --links`
+- **Daily action quotas** — atomic reservations so parallel agents share one budget
+- **Parallel agents** — coordinated through SQLite queue leases (not ad hoc lock files)
+- **Session persistence** — cookie restore for legacy `main.py` batch runs
 
 ### Reporting & Observability
 - **Structured logging** — JSON log output option for machine parsing, with colored terminal output
 - **Execution summary** — ASCII table printed at the end showing success/failure per action
 - **Progress bar** — visual progress indicator via `tqdm` for long runs
 - **Webhook notifications** — send results to Discord, Slack, or any generic JSON webhook on completion or failure
+- **`reddit-tool errors` / `overview`** — recent failures and control-plane snapshot
 
 ### Database Tracking
-- **SQLite action log** — every action is logged with timestamp, account, result, and optional screenshot path
+- **SQLite (WAL)** — action log, queue, leases, quotas, schedules, profile associations
 - **Duplicate prevention** — skips actions already successfully performed by the same account
 - **Daily stats** — tracks action counts per account per day for quota enforcement
-- **Summary queries** — query aggregated success/failure stats from the database
 
 ### Developer Experience
-- **Unit tests** — comprehensive test suite for config, parsing, validation, database, proxy, and reporting
-- **Docker support** — `Dockerfile` with Chrome pre-installed for portable execution
+- **Unit tests** — control plane, actions, database, UI API, and parsing coverage
 - **CI pipeline** — GitHub Actions workflow for automated testing on supported Python versions
 - **Plugin architecture** — actions are modular classes; add new actions without modifying core bot logic
 - **Installable package** — `pyproject.toml` for `pip install .` support
+- **Dockerfile** — legacy headless batch only (not for Chrome profile attach)
 
 ---
 
@@ -122,13 +141,18 @@ or with uv:
 uv sync --extra dev
 ```
 
-### Docker Installation
+After install, CLIs are available as `reddit-tool`, `reddit-agentctl`, and
+`reddit-ui`. From a checkout, the same entry points are:
 
 ```bash
-docker build -t reddit-bot .
+.venv/bin/python scripts/reddit_tool.py --help
+.venv/bin/python scripts/agentctl.py --help
+.venv/bin/python scripts/reddit_ui.py --help
 ```
 
-> **Note:** Chrome and chromedriver are automatically managed by `webdriver-manager` — no manual download required.
+> **Note:** Chrome and chromedriver are managed by `webdriver-manager` when the
+> bot launches a browser. The primary path attaches to an already-running
+> saved Chrome debug profile instead.
 
 ### Local Web UI
 
@@ -137,30 +161,102 @@ make ui
 ```
 
 The dashboard binds to `127.0.0.1:8765` by default and uses the same
-`agentctl`/`reddit-tool` control plane as the terminal workflow.
+`agentctl`/`reddit-tool` control plane as the terminal workflow. See
+[`docs/local-ui.md`](docs/local-ui.md). Optional write protection:
+
+```bash
+export REDDIT_BOT_UI_TOKEN='your-long-random-token'
+make ui
+```
+
+When set, every UI `POST` must send `X-Reddit-Bot-Token`.
 
 ---
 
 ## Quick Start
 
-### Minimal Example
+Primary path: **saved Chrome profile** → **queue / `reddit-tool do`**. Agents
+should follow [`AGENTS.md`](AGENTS.md). Do not invent commands; use `--help`.
+
+### 0. Inspect shared state
+
+```bash
+.venv/bin/python scripts/agentctl.py status
+# or, when something looks wrong:
+.venv/bin/python scripts/reddit_tool.py doctor --json
+```
+
+### 1. Open a manually authenticated Chrome profile
+
+```bash
+.venv/bin/python scripts/reddit_healer_debug.py open-profile
+# Log in manually once inside that window. Do not script Reddit login.
+```
+
+Default profile: `Chrome Reddit Bot Debug Profile` on `127.0.0.1:9222`.
+
+### 2. Associate profile ↔ Reddit user (once)
+
+```bash
+.venv/bin/python scripts/agentctl.py profiles associate \
+  --profile-name "Chrome Reddit Bot Debug Profile" \
+  --reddit-user "u/Particular-Arm2102"
+```
+
+With a sole association (or `REDDIT_BOT_DEFAULT_USER` set), identity flags can
+be omitted on later commands.
+
+### 3a. One action end to end (`reddit-tool do`)
+
+```bash
+.venv/bin/python scripts/reddit_tool.py do \
+  --action upvote \
+  --link "https://www.reddit.com/r/example/comments/abc123/title/" \
+  --reddit-user "u/Particular-Arm2102"
+```
+
+`do` builds the action file, submits to the queue, runs one worker pass, and
+prints the outcome. Share shortlinks (`/r/.../s/...`) are rejected — resolve first:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py resolve-url \
+  --link "https://www.reddit.com/r/example/s/SHAREID" --json
+```
+
+### 3b. Queue a links file, then one worker pass
+
+```bash
+.venv/bin/python scripts/agentctl.py queue submit \
+  --reddit-user "u/Particular-Arm2102" \
+  --links links.txt
+
+.venv/bin/python scripts/agentctl.py queue worker --once
+```
+
+### Interactive menu
+
+```bash
+.venv/bin/python scripts/reddit_tool.py menu
+```
+
+### Legacy batch path (`main.py`)
+
+Password/cookie multi-account runs and dry-run previews still use `main.py`.
+This is an **owner escape hatch**, not the agent default:
 
 ```bash
 python main.py --accounts accounts.txt --links links.txt --verbose
-```
-
-### With Config File
-
-```bash
-cp config.example.yaml config.yaml
-# Edit config.yaml with your settings
+python main.py -a accounts.txt -l links.txt --dry-run --verbose
 python main.py --config config.yaml
 ```
 
-### Dry Run (Preview Without Executing)
+For attach mode without the queue (also owner-only):
 
 ```bash
-python main.py -a accounts.txt -l links.txt --dry-run --verbose
+.venv/bin/python main.py -a accounts.txt -l links.txt --verbose \
+  --use-existing-chrome \
+  --chrome-debugging-address 127.0.0.1:9222 \
+  --chrome-extension-healer
 ```
 
 ---
@@ -210,7 +306,16 @@ Find a control candidate before clicking:
 
 The expected action report includes candidate confidence, bounding box, state, and evidence. Click only when the command or user request explicitly calls for a real action.
 
-Run the bot through an attached profile:
+Run live work through the control plane (preferred):
+
+```bash
+.venv/bin/python scripts/agentctl.py queue submit \
+  --profile-name "Chrome Reddit Bot Debug Profile - account2" \
+  --links links.txt
+.venv/bin/python scripts/agentctl.py queue worker --once
+```
+
+Owner-only direct attach (escape hatch, not for agents):
 
 ```bash
 .venv/bin/python main.py -a accounts.txt -l links.txt --verbose \
@@ -219,7 +324,9 @@ Run the bot through an attached profile:
   --chrome-extension-healer
 ```
 
-For attach mode, `accounts.txt` is only used as the account label. The active Reddit account is whatever is manually logged in inside the Chrome profile attached to that port. Run one saved profile/port at a time.
+For attach mode, `accounts.txt` is only an account label. The active Reddit
+account is whatever is manually logged in inside the Chrome profile on that
+port. Use one saved profile/port per Reddit account.
 
 Print reusable setup details for any profile:
 
@@ -307,14 +414,18 @@ See [`config.example.yaml`](config.example.yaml) for the full template with comm
 | `REDDIT_BOT_CHROME_EXTENSION_PATH` | Path to the unpacked healer extension |
 | `REDDIT_BOT_CHROME_EXTENSION_BRIDGE_TIMEOUT_MS` | Timeout for extension bridge requests |
 | `REDDIT_BOT_CHROME_EXTENSION_MIN_CONFIDENCE` | Minimum control confidence required before clicking |
+| `REDDIT_BOT_DEFAULT_USER` | Default Reddit identity when no `--reddit-user` / `--profile-name` is passed (must match a `chrome_profile_accounts` row; sole association is preferred) |
+| `REDDIT_BOT_UI_TOKEN` | Optional shared secret for local UI write (`POST`) routes |
 
 ---
 
 ## Input Formats
 
-Both accounts and actions files support three formats:
+Action/links files are used by **queue submit**, schedules, and legacy batch.
+Accounts files are for the **legacy `main.py` password path** only (control
+plane uses Chrome profile associations).
 
-### Accounts
+### Accounts (legacy batch)
 
 **Pipe-delimited** (default):
 ```
@@ -394,6 +505,10 @@ https://reddit.com/r/test,join,,,,,,
 
 ## Anti-Detection
 
+The flags below apply mainly to **legacy `main.py` batch** sessions. The
+control-plane path relies on a real saved Chrome profile (manual login, Healer
+extension) rather than scripted UA/proxy login.
+
 ### Proxy Rotation
 
 Create a `proxies.txt` file:
@@ -451,62 +566,59 @@ Shuffles the action list for each account so they don't all perform the same seq
 
 ## Orchestration
 
-### Agentic Operation
+### Agentic Operation (control plane)
 
-LLM agents should start with the agent runbook:
+LLM agents should start with the agent runbook and skill, not `main.py`:
 
 ```bash
-cat AGENTS.md
+# Read AGENTS.md for policy; use the reddit-bot skill for the fast path.
 .venv/bin/python scripts/agentctl.py status
+.venv/bin/python scripts/reddit_tool.py doctor --json
+.venv/bin/python scripts/reddit_tool.py capabilities
 ```
 
-For live Reddit mutations, agents should submit actions to the shared queue
-instead of running `main.py` directly:
+Live mutations: `reddit-tool do` or queue submit + one worker pass:
 
 ```bash
 .venv/bin/python scripts/agentctl.py profiles associate \
   --profile-name "Chrome Reddit Bot Debug Profile" \
   --reddit-user "u/Particular-Arm2102"
 
+.venv/bin/python scripts/reddit_tool.py do \
+  --action upvote \
+  --link "https://www.reddit.com/r/example/comments/abc/title/" \
+  --reddit-user "u/Particular-Arm2102"
+
+# Equivalent multi-action flow:
 .venv/bin/python scripts/agentctl.py queue submit \
   --reddit-user "u/Particular-Arm2102" \
   --links links.txt
-
 .venv/bin/python scripts/agentctl.py --config config.yaml queue worker --once
 ```
 
-Agents can also queue by Chrome profile with `--profile-name "Chrome Reddit Bot Debug Profile"`.
-The queue uses SQLite leases and atomic daily quota reservations to coordinate
-parallel agents. See `docs/agentic-operations.md` and
-`docs/scheduler-and-rate-limits.md`.
+Agents can also queue by Chrome profile with `--profile-name`. The queue uses
+SQLite WAL, leases, and atomic daily quota reservations. See
+[`docs/agentic-operations.md`](docs/agentic-operations.md) and
+[`docs/scheduler-and-rate-limits.md`](docs/scheduler-and-rate-limits.md).
 
 ### Human-Friendly Operations CLI
 
-Use `scripts/reddit_tool.py` for day-to-day inspection and simple scheduling. It
-is a thin `argparse` wrapper around `agentctl`, so live work still goes through
-the project queue, schedule registry, executor, leases, and quotas.
-
-Open the interactive terminal menu:
+Use `scripts/reddit_tool.py` (`reddit-tool` after install) for day-to-day work.
+Live actions still go through the project queue, schedules, executor, leases,
+and quotas.
 
 ```bash
 .venv/bin/python scripts/reddit_tool.py menu
-```
-
-The menu covers overview, capabilities, schedules, queue, job lookup, executor
-status, recent errors, profiles, limits, adding schedules, queue submission, and
-running due schedules.
-
-Direct commands are still available when you know what you want:
-
-```bash
 .venv/bin/python scripts/reddit_tool.py overview
+.venv/bin/python scripts/reddit_tool.py doctor --json
+.venv/bin/python scripts/reddit_tool.py resolve-url --link "<share_or_post_url>" --json
 .venv/bin/python scripts/reddit_tool.py schedules
 .venv/bin/python scripts/reddit_tool.py queue --status failed
 .venv/bin/python scripts/reddit_tool.py executor
 .venv/bin/python scripts/reddit_tool.py errors
 ```
 
-Add a one-time scheduled action by writing the action file automatically:
+Add a one-time scheduled action (writes the action file automatically):
 
 ```bash
 .venv/bin/python scripts/reddit_tool.py schedule add \
@@ -538,64 +650,50 @@ Run due project schedules and exactly one worker pass:
 .venv/bin/python scripts/reddit_tool.py schedule run-due --run-worker
 ```
 
-After editable install, the same CLI is available as `reddit-tool`.
-
-### Parallel Execution
-
-Run multiple accounts simultaneously:
+### Daily Quotas (control plane)
 
 ```bash
+.venv/bin/python scripts/agentctl.py limits set \
+  --account "Particular-Arm2102" \
+  --daily-action-quota 25
+.venv/bin/python scripts/agentctl.py limits list
+```
+
+Legacy `config.yaml` `rate_limit.daily_action_quota` still applies to direct
+`main.py` batch runs; agents should use `agentctl limits`.
+
+### Legacy batch orchestration (`main.py`)
+
+These flags remain for owner-controlled multi-account batch runs. Prefer the
+queue for anything an agent or schedule should own.
+
+```bash
+# Parallel browsers (legacy batch)
 python main.py -a accounts.txt -l links.txt --parallel 3
-```
 
-### Scheduled Execution
-
-Run on a schedule (simple interval-based):
-
-```bash
+# Simple interval schedule inside main.py (prefer agentctl schedules)
 python main.py -a accounts.txt -l links.txt --schedule "0 */6 * * *"
-```
 
-The bot will run every 6 hours and repeat indefinitely.
-
-### Session Persistence
-
-Save cookies between runs to avoid re-logging in:
-
-```bash
+# Cookie session files under .sessions/
 python main.py -a accounts.txt -l links.txt --session-persistence
 ```
 
-Sessions are stored in `.sessions/` as JSON cookie files.
-
-### Use your already logged-in Chrome
-
-If you want to avoid credentials entirely, use the saved debug profile workflow above and attach to its DevTools address:
+Direct attach without the queue (owner escape hatch):
 
 ```bash
 .venv/bin/python scripts/reddit_healer_debug.py open-profile \
   --profile-name "Chrome Reddit Bot Debug Profile" \
   --port 9222
-```
 
-Then run:
-
-```bash
 .venv/bin/python main.py -a accounts.txt -l links.txt \
   --use-existing-chrome \
   --chrome-debugging-address 127.0.0.1:9222 \
   --chrome-extension-healer
 ```
 
-You can still point directly to a Chrome user-data directory when you are not attaching to an already running debugger:
-
-```bash
-python main.py -a accounts.txt -l links.txt \
-  --use-existing-chrome \
-  --chrome-user-data-dir "/Users/<you>/Library/Application Support/Chrome Reddit Bot Debug Profile"
-```
-
-Attach mode is safer for this project because it keeps login manual, exposes `127.0.0.1:<port>` for inspection, and works with the Healer extension already loaded in that profile.
+You can also pass `--chrome-user-data-dir` when not attaching to a running
+debugger. Attach mode is safer: login stays manual, DevTools is inspectable,
+and the Healer extension can already be loaded in that profile.
 
 ### Saved profile per account
 
@@ -608,24 +706,18 @@ Use one Chrome user-data-dir and one port per Reddit account. Example:
   --url "https://www.reddit.com/login/"
 ```
 
-After manual login, target that profile with `--chrome-debugging-address 127.0.0.1:9224`.
-
-### Daily Quotas
-
-Set in config:
-
-```yaml
-rate_limit:
-  daily_action_quota: 50
-```
-
-Once an account reaches 50 actions in a day, remaining actions are skipped.
+After manual login, associate and queue with that profile/port — do not reuse
+one debugger address across accounts.
 
 ---
 
 ## Credentials & Security
 
-### Encrypt Credentials
+Primary operation uses **manually authenticated Chrome profiles** — no
+password file required. The sections below apply only to the **legacy**
+`main.py` accounts-file path.
+
+### Encrypt Credentials (legacy batch)
 
 First, encrypt your accounts file:
 
@@ -641,7 +733,7 @@ export REDDIT_BOT_KEY="your-secret-passphrase"
 python main.py -a accounts.bin -l links.txt --encrypt-credentials
 ```
 
-### Environment Variable Accounts
+### Environment Variable Accounts (legacy batch)
 
 ```bash
 export REDDIT_ACCOUNT_1="username1|password1"
@@ -739,13 +831,16 @@ chrome_extension_path: "chrome_extension/reddit_healer"
 chrome_extension_min_confidence: 0.8
 ```
 
-Or from the CLI:
+Or from the legacy CLI:
 
 ```bash
 python main.py -a accounts.txt -l links.txt --chrome-extension-healer
 ```
 
-For Chrome launched by the bot, the extension is loaded automatically from `chrome_extension_path`. For `--use-existing-chrome --chrome-debugging-address`, install or load the unpacked extension in that Chrome profile before running the bot.
+Queue workers honor the same config when attaching to a saved profile. For
+Chrome launched by the bot, the extension is loaded from `chrome_extension_path`.
+For attach mode, load the unpacked extension in that Chrome profile first
+(`open-profile` already passes `--load-extension`).
 
 When operating through saved debug profiles, use the helper first:
 
@@ -760,7 +855,11 @@ Report the returned best candidate's confidence, bounding box, state, and eviden
 
 ## Database Tracking
 
-All actions are logged to a SQLite database (`reddit_bot.db` by default):
+All coordination and action history live in SQLite (`reddit_bot.db` by default).
+Connections open with **WAL** (`PRAGMA journal_mode=WAL`, `synchronous=NORMAL`)
+so readers (UI, agents, status) are less blocked by writers. Backup with the
+SQLite backup API, or stop writers first — do not copy only the main file while
+the process is running.
 
 ```sql
 -- View all actions
@@ -773,13 +872,18 @@ SELECT * FROM action_log WHERE success = 0;
 SELECT * FROM account_stats WHERE action_date = date('now');
 ```
 
-The database prevents duplicate actions — if an account has already successfully upvoted a post, it will be skipped on subsequent runs.
+The action log prevents duplicate successful actions for the same account. The
+same database also stores the agent queue, leases, quotas, schedules, and
+Chrome profile ↔ Reddit user associations. Details:
+[`docs/scheduler-and-rate-limits.md`](docs/scheduler-and-rate-limits.md).
 
 ---
 
-## Docker
+## Docker (legacy batch)
 
-### Build and Run
+> **Legacy only.** The image runs `main.py --headless` for password/cookie
+> batch jobs. It is **not** the Chrome debug-profile attach path and is not
+> suitable for the queue-first agent workflow on a local Mac with saved profiles.
 
 ```bash
 docker build -t reddit-bot .
@@ -789,7 +893,7 @@ docker run -v $(pwd)/accounts.txt:/app/accounts.txt \
            reddit-bot -a accounts.txt -l links.txt --verbose
 ```
 
-### With Config File
+With a config file:
 
 ```bash
 docker run -v $(pwd)/config.yaml:/app/config.yaml \
@@ -798,11 +902,36 @@ docker run -v $(pwd)/config.yaml:/app/config.yaml \
            reddit-bot --config config.yaml
 ```
 
-The Docker image automatically runs in headless mode.
+For day-to-day operation, use Quick Start above (profile + `reddit-tool` /
+`agentctl`) instead of Docker.
 
 ---
 
 ## CLI Reference
+
+### Control plane (primary)
+
+Verify flags with `--help` — do not invent subcommands.
+
+```bash
+.venv/bin/python scripts/agentctl.py --help
+.venv/bin/python scripts/agentctl.py status
+.venv/bin/python scripts/agentctl.py profiles --help
+.venv/bin/python scripts/agentctl.py queue --help
+.venv/bin/python scripts/agentctl.py schedules --help
+.venv/bin/python scripts/agentctl.py limits --help
+.venv/bin/python scripts/agentctl.py executor --help
+
+.venv/bin/python scripts/reddit_tool.py --help
+.venv/bin/python scripts/reddit_tool.py doctor --json
+.venv/bin/python scripts/reddit_tool.py resolve-url --link URL
+.venv/bin/python scripts/reddit_tool.py do --action upvote --link URL
+.venv/bin/python scripts/reddit_tool.py capabilities
+```
+
+After install: `reddit-agentctl`, `reddit-tool`, `reddit-ui`.
+
+### `main.py` (legacy / owner escape hatch)
 
 ```
 usage: reddit-bot [-h] [-a ACCOUNTS] [-l LINKS] [-c CONFIG] [-v]
@@ -816,7 +945,7 @@ usage: reddit-bot [-h] [-a ACCOUNTS] [-l LINKS] [-c CONFIG] [-v]
                   [--session-persistence] [--encrypt-credentials]
                   [--screenshot-on-failure] [--webhook-url WEBHOOK_URL]
 
-A feature-rich Reddit automation bot using Selenium.
+Legacy multi-account Selenium batch entry (owner escape hatch).
 
 options:
   -h, --help            Show this help message and exit
@@ -891,26 +1020,41 @@ Tests cover:
 
 ## Architecture
 
+Two operational paths share the same Selenium action plugins and SQLite DB:
+
+| Path | Entry | When to use |
+|------|--------|-------------|
+| **Control plane (primary)** | `scripts/agentctl.py`, `scripts/reddit_tool.py`, `make ui` | Agents, schedules, day-to-day live work via queue + Chrome debug profile |
+| **Legacy batch (escape hatch)** | `main.py`, Docker `ENTRYPOINT` | Owner multi-account password/cookie/headless batch; not for agents |
+
 ```
 reddit-bot/
-├── main.py                    # Entry point and orchestration
-├── args.py                    # CLI argument parser
+├── main.py                    # Legacy batch entry (owner escape hatch)
+├── args.py                    # main.py CLI argument parser
 ├── config.example.yaml        # Example configuration file
 ├── pyproject.toml             # Package configuration
-├── Dockerfile                 # Docker support
-├── Makefile                   # Test, skill sync, and UI shortcuts
+├── Dockerfile                 # Legacy headless batch image only
+├── Makefile                   # test, check-skill, sync-skill, ui
 ├── AGENTS.md                  # Agent runbook and live-action policy
+├── AGENT.md                   # Short Chrome-profile playbook
 ├── bot/
 │   ├── __init__.py
-│   ├── bot.py                 # Core RedditBot class
+│   ├── bot.py                 # Core RedditBot class (Selenium lifecycle)
 │   ├── config.py              # BotConfig dataclass with YAML/env support
-│   ├── database.py            # SQLite action log, queue, leases, schedules, quotas
+│   ├── database.py            # SQLite WAL: action log, queue, leases, schedules, quotas
 │   ├── action_schema.py       # Machine-readable reddit-tool action schema
 │   ├── agentctl.py            # Agent-safe control plane CLI
 │   ├── tool_cli.py            # Human-friendly reddit-tool CLI and JSON envelope
 │   ├── skills_sync.py         # .claude -> .codex skill mirror utility
 │   ├── reporting.py           # Summary, durable structured logging, webhooks
 │   ├── control/               # Shared control-plane helpers
+│   │   ├── doctor.py          # Read-only diagnostics
+│   │   ├── resolve.py         # Share-URL resolution helpers
+│   │   ├── profiles.py        # Profile discovery + identity defaults
+│   │   ├── queue.py           # Queue submit/worker helpers
+│   │   ├── limits.py          # Quota helpers
+│   │   ├── executor.py        # LaunchAgent / executor helpers
+│   │   ├── status.py          # status JSON assembly
 │   │   ├── errors.py          # CLI exception types
 │   │   └── schedules.py       # RRULE, cadence, and schedule ID helpers
 │   ├── actions/               # Plugin-based action system
@@ -928,6 +1072,7 @@ reddit-bot/
 │   ├── utils/                 # Shared utilities
 │   │   ├── chrome_extension_bridge.py # Reddit healer extension bridge
 │   │   ├── chromedriver.py    # ChromeDriver resolution helper
+│   │   ├── reddit_urls.py     # Canonical / share URL helpers
 │   │   ├── clock.py           # UTC timestamp helpers
 │   │   ├── timeouts.py        # Randomized delays
 │   │   ├── retry.py           # Exponential backoff decorator
@@ -935,7 +1080,7 @@ reddit-bot/
 │   │   ├── self_healing.py    # Runtime selector healing
 │   │   ├── visible_vote.py    # Visible vote control diagnostics/clicking
 │   │   ├── user_agents.py     # UA string rotation
-│   │   ├── credentials.py     # Account parsing and encryption
+│   │   ├── credentials.py     # Account parsing and encryption (legacy batch)
 │   │   ├── input_parser.py    # Action file parsing
 │   │   ├── validators.py      # URL validation
 │   │   └── proxy.py           # Proxy loading and rotation
@@ -943,7 +1088,7 @@ reddit-bot/
 │       └── server.py          # API and static file server
 ├── chrome_extension/          # Reddit healer Chrome extension
 ├── docs/                      # Agent operations, scheduling, UI, and maintenance docs
-├── scripts/                   # Thin CLI launchers and diagnostics
+├── scripts/                   # Thin CLI launchers (agentctl, reddit_tool, ui, healer)
 ├── tests/                     # Unit and API test suite
 ├── web/                       # Zero-build dashboard frontend
 └── .github/

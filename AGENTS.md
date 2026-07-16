@@ -10,6 +10,17 @@ stateful and quota-limited.
 > action (submit + worker + result in one call). This runbook is the deep
 > reference the skill points into.
 
+**Dual path (do not mix them up):**
+
+| Path | Tools | Role |
+|------|--------|------|
+| **Control plane (default)** | `scripts/agentctl.py`, `scripts/reddit_tool.py`, queue, schedules, saved Chrome debug profiles | All agent and scheduled live work |
+| **Legacy batch (owner only)** | `main.py`, Docker headless | Password/cookie multi-account batch; only when Raul explicitly asks |
+
+Do not invent commands. Verify with `--help` on `agentctl` / `reddit-tool`
+subcommands. Thin launchers: `scripts/agentctl.py` → `bot.agentctl`,
+`scripts/reddit_tool.py` → `bot.tool_cli`.
+
 ## Required First Step
 
 Run:
@@ -34,15 +45,29 @@ It checks DB, profile associations, identity resolve, DevTools, healer extension
 executor, queue depth, and leases. Soft failures (Chrome down) leave exit 0 so
 you can parse JSON; only hard misconfig (DB open failure) exits non-zero.
 
+Share shortlinks need a canonical URL first:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py resolve-url \
+  --link "https://www.reddit.com/r/<sub>/s/<id>" --json
+```
+
+JSON shape: `{input, output, resolved, kind}` (inside the tool envelope when
+`--json` is set). Use `output` for queue/schedule/`do`.
+
 ## Default Execution Rule
 
 For any live Reddit action requested from an agent or automation, the default
 execution path is:
 
-1. Resolve the Chrome profile/Reddit user with `agentctl profiles resolve`.
-2. Write the requested actions to a links/action file.
-3. Submit that file with `agentctl queue submit`.
-4. Run exactly one queue worker pass with `agentctl queue worker --once`.
+1. Resolve the Chrome profile/Reddit user with `agentctl profiles resolve`
+   (or rely on identity defaults — sole DB association or
+   `REDDIT_BOT_DEFAULT_USER`).
+2. Prefer one-shot `reddit-tool do --action ... --link ...` when a single action
+   is enough; otherwise write a links/action file.
+3. Submit multi-action files with `agentctl queue submit`.
+4. Run exactly one queue worker pass with `agentctl queue worker --once`
+   (already included by `reddit-tool do` unless `--no-run`).
 
 Do not schedule prompts that tell a future agent to click, vote, search, or run
 `main.py` directly. Scheduled live work must register a project schedule with
@@ -58,15 +83,16 @@ opening saved profiles, not as the primary live-action scheduler.
 - Do not perform live Reddit mutations unless Raul explicitly requested that
   exact action for the current run.
 - Do not script Reddit login. Use manually authenticated saved Chrome profiles.
-- For agent-run live work, submit actions through `agentctl queue`; do not call
-  `main.py` directly unless Raul explicitly asks for a manual direct run.
+- For agent-run live work, submit actions through `agentctl queue` or
+  `reddit-tool do`; do not call `main.py` directly unless Raul explicitly asks
+  for a manual direct run.
 - For scheduled live work, create or update a project-owned schedule with
   `agentctl schedules register --links ...`, then rely on
   the project executor service to run
   `agentctl schedules run-due --run-worker`.
 - Use one Chrome user-data-dir and one DevTools port per Reddit account.
-- Acquire queue/profile/account coordination through SQLite; do not implement a
-  separate scheduler, lock file, or ad hoc rate limiter.
+- Acquire queue/profile/account coordination through SQLite (WAL mode); do not
+  implement a separate scheduler, lock file, or ad hoc rate limiter.
 
 ## Saved Chrome Profile Defaults
 
@@ -99,6 +125,11 @@ Resolve either identity before scheduling live work:
 .venv/bin/python scripts/agentctl.py profiles resolve --profile-name "Chrome Reddit Bot Debug Profile"
 .venv/bin/python scripts/agentctl.py profiles resolve --reddit-user "u/Particular-Arm2102"
 ```
+
+When no `--reddit-user` / `--profile-name` / `--account-label` is passed,
+identity resolution uses (1) a sole `chrome_profile_accounts` row, else
+(2) `REDDIT_BOT_DEFAULT_USER` if it matches an association, else fails with a
+clear error. Prefer an explicit flag when multiple associations exist.
 
 Probe the active debugger:
 
@@ -247,7 +278,9 @@ exact instruction for that run.
 
 ## Related Docs
 
-- `docs/agentic-operations.md`
-- `docs/scheduler-and-rate-limits.md`
-- `docs/chrome-debug-profiles.md`
-- `docs/weekly-log-maintenance.md`
+- `docs/agentic-operations.md` — control-plane workflow, queue, executor
+- `docs/scheduler-and-rate-limits.md` — SQLite WAL, leases, quotas, schedules
+- `docs/chrome-debug-profiles.md` — profile setup and ports
+- `docs/local-ui.md` — localhost dashboard and optional `REDDIT_BOT_UI_TOKEN`
+- `docs/weekly-log-maintenance.md` — log rotation automation (maintenance only)
+- `README.md` — control-plane Quick Start; marks `main.py`/Docker as legacy
