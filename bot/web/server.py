@@ -7,7 +7,9 @@ import contextlib
 import io
 import json
 import mimetypes
+import os
 import re
+import secrets
 import sys
 import uuid
 from collections.abc import Callable
@@ -29,6 +31,9 @@ from bot.utils.clock import utc_now
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STATIC_DIR = REPO_ROOT / "web"
 DEFAULT_ACTIONS_DIR = REPO_ROOT / ".agent-actions"
+UI_TOKEN_ENV = "REDDIT_BOT_UI_TOKEN"
+UI_TOKEN_HEADER = "X-Reddit-Bot-Token"
+LOCAL_BIND_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 POST_ACTION_FIELDS = (
     "link",
     "comment",
@@ -55,6 +60,19 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     return value
+
+
+def resolve_ui_token(ui_token: str | None = None) -> str | None:
+    """Return the configured write token, or None when write auth is disabled.
+
+    Explicit ``ui_token`` wins (including empty string → disabled). When the
+    argument is omitted, read ``REDDIT_BOT_UI_TOKEN`` from the environment.
+    """
+    if ui_token is not None:
+        value = str(ui_token).strip()
+        return value or None
+    env_value = os.environ.get(UI_TOKEN_ENV, "").strip()
+    return env_value or None
 
 
 def human_cadence(rrule_text: str) -> str:
@@ -154,11 +172,13 @@ class RedditUIHandler(BaseHTTPRequestHandler):
     db_path = "reddit_bot.db"
     static_dir = DEFAULT_STATIC_DIR
     actions_dir = DEFAULT_ACTIONS_DIR
+    ui_token: str | None = None
+    quiet = False
 
     server_version = "reddit-bot-ui/1.0"
 
     def log_message(self, format: str, *args: Any) -> None:
-        if getattr(self.server, "quiet", False):
+        if getattr(self.server, "quiet", False) or self.quiet:
             return
         super().log_message(format, *args)
 
@@ -170,6 +190,8 @@ class RedditUIHandler(BaseHTTPRequestHandler):
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:
+        if not self._authorize_write():
+            return
         parsed = urlsplit(self.path)
         if not parsed.path.startswith("/api/"):
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found."})
@@ -179,6 +201,24 @@ class RedditUIHandler(BaseHTTPRequestHandler):
             self._handle_api_post(parsed.path, parse_qs(parsed.query), body)
         except ValueError as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+
+    def _authorize_write(self) -> bool:
+        """Require X-Reddit-Bot-Token on POST when a write token is configured."""
+        expected = self.ui_token
+        if not expected:
+            return True
+        provided = self.headers.get(UI_TOKEN_HEADER) or ""
+        try:
+            matched = secrets.compare_digest(str(provided), str(expected))
+        except (TypeError, ValueError):
+            matched = False
+        if matched:
+            return True
+        self._send_json(
+            HTTPStatus.UNAUTHORIZED,
+            {"ok": False, "error": "Missing or invalid write token."},
+        )
+        return False
 
     def _open_db(self) -> BotDatabase:
         return BotDatabase(str(self.db_path))
@@ -565,6 +605,7 @@ def make_handler(
     static_dir: Path = DEFAULT_STATIC_DIR,
     actions_dir: Path = DEFAULT_ACTIONS_DIR,
     quiet: bool = False,
+    ui_token: str | None = None,
 ) -> type[RedditUIHandler]:
     class ConfiguredRedditUIHandler(RedditUIHandler):
         pass
@@ -573,6 +614,8 @@ def make_handler(
     ConfiguredRedditUIHandler.static_dir = Path(static_dir)
     ConfiguredRedditUIHandler.actions_dir = Path(actions_dir)
     ConfiguredRedditUIHandler.quiet = quiet
+    # None means "read env"; pass "" to force disabled for a process.
+    ConfiguredRedditUIHandler.ui_token = resolve_ui_token(ui_token)
     return ConfiguredRedditUIHandler
 
 
@@ -584,12 +627,16 @@ def create_server(
     static_dir: Path = DEFAULT_STATIC_DIR,
     actions_dir: Path = DEFAULT_ACTIONS_DIR,
     quiet: bool = False,
+    ui_token: str | None = None,
 ) -> ThreadingHTTPServer:
+    if host not in LOCAL_BIND_HOSTS:
+        raise ValueError("The UI is localhost-only. Use 127.0.0.1, localhost, or ::1.")
     handler = make_handler(
         db_path=db_path,
         static_dir=static_dir,
         actions_dir=actions_dir,
         quiet=quiet,
+        ui_token=ui_token,
     )
     server = ThreadingHTTPServer((host, port), handler)
     server.quiet = quiet  # type: ignore[attr-defined]
@@ -605,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--actions-dir", default=str(DEFAULT_ACTIONS_DIR))
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
-    if args.host not in {"127.0.0.1", "localhost", "::1"}:
+    if args.host not in LOCAL_BIND_HOSTS:
         parser.error("The UI is localhost-only. Use 127.0.0.1, localhost, or ::1.")
 
     server = create_server(

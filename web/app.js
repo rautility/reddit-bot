@@ -28,10 +28,28 @@ function accountQuery(params = {}) {
   return text ? `?${text}` : "";
 }
 
+function writeToken() {
+  const meta = document.querySelector('meta[name="reddit-bot-ui-token"]');
+  const fromMeta = (meta?.getAttribute("content") || "").trim();
+  if (fromMeta) return fromMeta;
+  return (localStorage.getItem("redditBotUiToken") || "").trim();
+}
+
 async function api(path, options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+  const method = String(options.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    const token = writeToken();
+    if (token) {
+      headers["X-Reddit-Bot-Token"] = token;
+    }
+  }
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers,
   });
   const payload = await response.json();
   if (!response.ok) {

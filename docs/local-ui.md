@@ -17,9 +17,10 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The server binds to `127.0.0.1` by default and rejects non-local bind hosts.
-It uses the standard library `http.server`; there is no Node, bundler, or web
-framework dependency.
+The server binds to `127.0.0.1` by default and rejects non-local bind hosts
+(`0.0.0.0`, LAN addresses, etc.). Allowed hosts are only `127.0.0.1`,
+`localhost`, and `::1`. It uses the standard library `http.server`; there is no
+Node, bundler, or web framework dependency.
 
 ## What It Shows
 
@@ -28,7 +29,8 @@ framework dependency.
 - Schedule: registered project schedules with a human cadence, next/last run,
   status, account, last error, pause/resume, delete, and run-due controls.
 - Failed: failed queue jobs plus action-log errors, with per-row retry and
-  retry-all controls.
+  retry-all controls. Failed queue rows include `attempts`, `max_attempts`,
+  `last_error`, and `result_json` from the queue table.
 - Successful: successful action history from `action_log`.
 - Add Task: action-schema-driven form for immediate, one-time, daily, weekly,
   and raw RRULE tasks.
@@ -43,6 +45,40 @@ behavior stay centralized.
 
 Immediate tasks and `Run Due Now` can perform real Reddit actions through the
 existing worker. The browser UI asks for confirmation before those actions.
+
+### Optional write token
+
+By default the UI trusts the localhost single-user model: any process that can
+reach `127.0.0.1:8765` can call mutation endpoints.
+
+To require a shared secret on **all `POST` routes** (reads stay open):
+
+```bash
+export REDDIT_BOT_UI_TOKEN='your-long-random-token'
+make ui
+```
+
+When that env var is set (non-empty), every write must send:
+
+```http
+X-Reddit-Bot-Token: your-long-random-token
+```
+
+Missing or wrong tokens receive `401` with
+`{"ok": false, "error": "Missing or invalid write token."}`.
+
+Supply the token to the browser UI in one of these ways (do not commit a real
+token into the repo):
+
+1. **localStorage (preferred):** in DevTools console on the UI origin:
+   `localStorage.setItem("redditBotUiToken", "your-long-random-token")`
+2. **Meta tag:** set
+   `<meta name="reddit-bot-ui-token" content="...">` in a local-only copy of
+   `web/index.html` (the shipped file leaves `content` empty).
+
+`web/app.js` attaches `X-Reddit-Bot-Token` on non-GET requests when either
+source is present. GET endpoints remain unauthenticated so the dashboard can
+still load overview data without a token.
 
 ## API Shape
 
