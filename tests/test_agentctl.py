@@ -75,7 +75,7 @@ def test_queue_submit_rejects_reddit_share_link_for_post_action(tmp_path, capsys
 
 
 def test_probe_debug_address_reports_sandbox_hint(mocker):
-    mocker.patch("bot.agentctl.urlopen", side_effect=OSError(1, "Operation not permitted"))
+    mocker.patch("bot.control.profiles.urlopen", side_effect=OSError(1, "Operation not permitted"))
 
     payload = agentctl.probe_debug_address("127.0.0.1:9222")
 
@@ -116,7 +116,7 @@ def test_queue_worker_enables_failure_screenshots_for_live_jobs(tmp_path, mocker
         )
     )
     run_account = mocker.patch("main.run_account", return_value=summary)
-    mocker.patch("bot.agentctl.setup_structured_logger", return_value=mocker.Mock())
+    mocker.patch("bot.control.queue.setup_structured_logger", return_value=mocker.Mock())
 
     payload = agentctl._run_queue_worker(
         argparse.Namespace(
@@ -140,7 +140,7 @@ def test_profiles_associate_and_resolve_by_reddit_user(tmp_path, capsys, mocker)
     db_path = tmp_path / "agent.db"
     profile_path = tmp_path / "Chrome Reddit Bot Debug Profile"
     mocker.patch(
-        "bot.agentctl.discover_saved_profiles",
+        "bot.control.profiles.discover_saved_profiles",
         return_value=[
             {
                 "profileName": "Chrome Reddit Bot Debug Profile",
@@ -239,7 +239,7 @@ def test_profiles_probe_reports_browser_metadata(mocker, capsys):
         }
     ).encode("utf-8")
     response.__enter__.return_value = response
-    urlopen = mocker.patch("bot.agentctl.urlopen", return_value=response)
+    urlopen = mocker.patch("bot.control.profiles.urlopen", return_value=response)
 
     exit_code = agentctl.main(["profiles", "probe", "--debug-address", "127.0.0.1:9222"])
 
@@ -417,10 +417,10 @@ def test_schedule_register_reports_executor_error_without_failing_registration(
 def test_executor_ensure_writes_expected_launchagent_plist(tmp_path, capsys, mocker):
     db_path = tmp_path / "agent.db"
     launch_agents = tmp_path / "LaunchAgents"
-    mocker.patch("bot.agentctl.platform.system", return_value="Darwin")
-    mocker.patch("bot.agentctl._launch_agents_dir", return_value=launch_agents)
+    mocker.patch("bot.control.executor.platform.system", return_value="Darwin")
+    mocker.patch("bot.control.executor.launch_agents_dir", return_value=launch_agents)
     run = mocker.patch(
-        "bot.agentctl.subprocess.run",
+        "bot.control.executor.subprocess.run",
         side_effect=[
             subprocess.CompletedProcess(["launchctl", "bootstrap"], 0, "", ""),
             subprocess.CompletedProcess(["launchctl", "kickstart"], 0, "", ""),
@@ -458,7 +458,7 @@ def test_executor_ensure_writes_expected_launchagent_plist(tmp_path, capsys, moc
 
 
 def test_executor_status_outputs_json_on_non_macos(capsys, mocker):
-    mocker.patch("bot.agentctl.platform.system", return_value="Linux")
+    mocker.patch("bot.control.executor.platform.system", return_value="Linux")
 
     exit_code = agentctl.main(["executor", "status"])
 

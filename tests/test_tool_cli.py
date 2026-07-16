@@ -275,7 +275,7 @@ def test_external_search_upvote_preflights_before_registration(tmp_path, capsys,
     db_path = tmp_path / "agent.db"
     actions_dir = tmp_path / "actions"
     mocker.patch(
-        "bot.tool_cli._profile_preflight",
+        "bot.cli.actions._profile_preflight",
         side_effect=tool_cli.CliError("Chrome unavailable"),
     )
 
@@ -551,6 +551,7 @@ def test_menu_add_schedule_uses_prompts(tmp_path, capsys, monkeypatch):
     db_path = tmp_path / "agent.db"
     actions_dir = tmp_path / "menu-actions"
     monkeypatch.setattr(tool_cli, "DEFAULT_ACTIONS_DIR", actions_dir)
+    monkeypatch.setattr("bot.cli.bridge.DEFAULT_ACTIONS_DIR", actions_dir)
     inputs = iter(
         [
             "10",

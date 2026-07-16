@@ -3,43 +3,101 @@
 from __future__ import annotations
 
 import argparse
-import copy
-import json
-import logging
 import os
-import platform
-import plistlib
-import signal
 import socket
-import subprocess
 import sys
-import time
-from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
 
-from bot.config import BotConfig
+from bot.control import executor as executor_control
+from bot.control import limits as limits_control
+from bot.control import profiles as profile_control
+from bot.control import queue as queue_control
 from bot.control import schedules as schedule_control
-from bot.database import BotDatabase
-from bot.reporting import setup_structured_logger
+from bot.control import status as status_control
+from bot.control.common import REPO_ROOT, load_config, open_db, print_json
+from bot.control.executor import (
+    EXECUTOR_DIR,
+    EXECUTOR_LABEL,
+    EXECUTOR_LOG_PATH,
+    EXECUTOR_PID_PATH,
+    ensure_executor_service,
+    executor_status,
+)
+from bot.control.profiles import (
+    DEFAULT_DEBUG_ADDRESS,
+    DEFAULT_EXTENSION_PATH,
+    DEFAULT_PROFILE_NAME,
+    DEFAULT_PROFILE_PREFIX,
+    discover_profiles_with_associations,
+    discover_saved_profiles,
+    probe_debug_address,
+    profile_by_name,
+    resolve_profile_identity,
+)
+from bot.control.queue import (
+    CANONICAL_POST_ACTIONS,
+    action_entry_from_payload,
+    parse_agent_links_file,
+    run_due_schedules,
+    run_queue_worker,
+    summary_payload,
+    validate_canonical_post_actions,
+)
+from bot.control.status import read_codex_automations, read_crontab
 from bot.utils.clock import utc_now
-from bot.utils.credentials import Account
-from bot.utils.input_parser import ActionEntry, parse_links_file
-from bot.utils.validators import is_post_url, is_share_url, validate_reddit_url
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILE_PREFIX = "Chrome Reddit Bot Debug Profile"
-DEFAULT_PROFILE_NAME = "Chrome Reddit Bot Debug Profile"
-DEFAULT_DEBUG_ADDRESS = "127.0.0.1:9222"
-DEFAULT_EXTENSION_PATH = REPO_ROOT / "chrome_extension/reddit_healer"
-EXECUTOR_DIR = REPO_ROOT / ".agent-executor"
-EXECUTOR_PID_PATH = EXECUTOR_DIR / "executor.pid"
-EXECUTOR_LOG_PATH = EXECUTOR_DIR / "executor.log"
-EXECUTOR_LABEL = "com.raul.reddit-bot.agentctl-scheduler"
-CANONICAL_POST_ACTIONS = {"upvote", "downvote", "comment", "save", "hide", "award"}
+# Keep public names bound so re-exports are used (F401) and external imports stay stable.
+__all__ = [
+    "CANONICAL_POST_ACTIONS",
+    "DEFAULT_DEBUG_ADDRESS",
+    "DEFAULT_EXTENSION_PATH",
+    "DEFAULT_PROFILE_NAME",
+    "DEFAULT_PROFILE_PREFIX",
+    "EXECUTOR_DIR",
+    "EXECUTOR_LABEL",
+    "EXECUTOR_LOG_PATH",
+    "EXECUTOR_PID_PATH",
+    "REPO_ROOT",
+    "discover_profiles_with_associations",
+    "discover_saved_profiles",
+    "ensure_executor_service",
+    "executor_status",
+    "main",
+    "probe_debug_address",
+    "run_due_schedules",
+    "run_queue_worker",
+]
+
+# Historical private aliases (tests / internal callers).
+_print_json = print_json
+_load_config = load_config
+_open_db = open_db
+_profile_by_name = profile_by_name
+_resolve_profile_identity = resolve_profile_identity
+_action_entry_from_payload = action_entry_from_payload
+_validate_canonical_post_actions = validate_canonical_post_actions
+_parse_agent_links_file = parse_agent_links_file
+_summary_payload = summary_payload
+_run_queue_worker = run_queue_worker
+_run_due_schedules = run_due_schedules
+_read_codex_automations = read_codex_automations
+_read_crontab = read_crontab
+_parse_toml_scalar = status_control.parse_toml_scalar
+_launch_agents_dir = executor_control.launch_agents_dir
+_agentctl_script_path = executor_control.agentctl_script_path
+_launch_agent_path = executor_control.launch_agent_path
+_pid_is_running = executor_control.pid_is_running
+_pid_file_status = executor_control.pid_file_status
+_launchctl_domain = executor_control.launchctl_domain
+_agentctl_base_command = executor_control.agentctl_base_command
+_launch_agent_program_arguments = executor_control.launch_agent_program_arguments
+_launch_agent_plist = executor_control.launch_agent_plist
+_write_launch_agent = executor_control.write_launch_agent
+_launchctl_print = executor_control.launchctl_print
+_launchd_status = executor_control.launchd_status
+_ensure_pid_loop = executor_control.ensure_pid_loop
 
 WEEKDAY_INDEX = schedule_control.WEEKDAY_INDEX
 _parse_dt = schedule_control.parse_dt
@@ -48,419 +106,28 @@ _parse_rrule_text = schedule_control.parse_rrule_text
 _next_run_after = schedule_control.next_run_after
 
 
-def _print_json(payload: Any) -> None:
-    print(json.dumps(payload, indent=2, sort_keys=True))
-
-
-def _agentctl_script_path() -> Path:
-    return REPO_ROOT / "scripts" / "agentctl.py"
-
-
-def _launch_agents_dir() -> Path:
-    override = os.environ.get("REDDIT_BOT_LAUNCH_AGENTS_DIR")
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / "Library" / "LaunchAgents"
-
-
-def _launch_agent_path() -> Path:
-    return _launch_agents_dir() / f"{EXECUTOR_LABEL}.plist"
-
-
-def _load_config(args: argparse.Namespace) -> BotConfig:
-    config = BotConfig.from_yaml(args.config) if args.config else BotConfig()
-    config.merge_env_vars()
-    if args.db_path:
-        config.db_path = args.db_path
-    return config
-
-
-def _open_db(args: argparse.Namespace) -> BotDatabase:
-    return BotDatabase(_load_config(args).db_path)
-
-
-def _profile_search_root() -> Path:
-    return Path.home() / "Library/Application Support"
-
-
-def discover_saved_profiles() -> list[dict[str, Any]]:
-    """Return saved Chrome user-data dirs that match this project's convention."""
-    root = _profile_search_root()
-    profiles = []
-    if not root.exists():
-        return profiles
-
-    for index, profile_path in enumerate(sorted(root.glob(f"{DEFAULT_PROFILE_PREFIX}*"))):
-        profile_name = profile_path.name
-        suggested_port = 9222 + index
-        profiles.append(
-            {
-                "profileName": profile_name,
-                "profilePath": str(profile_path),
-                "suggestedDebugAddress": f"127.0.0.1:{suggested_port}",
-                "isDefault": profile_name == DEFAULT_PROFILE_NAME,
-            }
-        )
-    return profiles
-
-
-def _profile_by_name(profile_name: str) -> dict[str, Any] | None:
-    for profile in discover_saved_profiles():
-        if profile["profileName"] == profile_name:
-            return profile
-    return None
-
-
-def _association_for_profile(
-    associations: list[dict[str, Any]],
-    profile_name: str,
-) -> dict[str, Any] | None:
-    return next(
-        (association for association in associations if association["profile_name"] == profile_name),
-        None,
-    )
-
-
-def discover_profiles_with_associations(db: BotDatabase) -> list[dict[str, Any]]:
-    """Return discovered profiles annotated with persisted Reddit account data."""
-    associations = db.list_chrome_profile_associations()
-    profiles = discover_saved_profiles()
-    seen_profile_names = set()
-    for profile in profiles:
-        seen_profile_names.add(profile["profileName"])
-        association = _association_for_profile(associations, profile["profileName"])
-        if association:
-            profile["redditUsername"] = association["reddit_username"]
-            profile["accountLabel"] = association["account_label"]
-            profile["configuredDebugAddress"] = association["debug_address"]
-
-    for association in associations:
-        if association["profile_name"] in seen_profile_names:
-            continue
-        profiles.append(
-            {
-                "profileName": association["profile_name"],
-                "profilePath": association["profile_path"],
-                "suggestedDebugAddress": association["debug_address"],
-                "configuredDebugAddress": association["debug_address"],
-                "isDefault": association["profile_name"] == DEFAULT_PROFILE_NAME,
-                "redditUsername": association["reddit_username"],
-                "accountLabel": association["account_label"],
-                "missingLocalProfile": True,
-            }
-        )
-    return profiles
-
-
-def _resolve_profile_identity(
-    db: BotDatabase,
-    *,
-    account_label: str | None = None,
-    profile_name: str | None = None,
-    reddit_user: str | None = None,
-) -> dict[str, Any]:
-    """Resolve account/profile identity from an explicit label, profile, or user."""
-    association = None
-    if profile_name:
-        association = db.get_chrome_profile_association(profile_name=profile_name)
-        if association is None:
-            profile = _profile_by_name(profile_name)
-            if profile is None:
-                raise SystemExit(f"Unknown Chrome profile: {profile_name}")
-            return {
-                "accountLabel": account_label or profile_name,
-                "profileName": profile_name,
-                "profilePath": profile["profilePath"],
-                "debugAddress": profile["suggestedDebugAddress"],
-                "redditUsername": None,
-                "associationFound": False,
-            }
-    elif reddit_user:
-        association = db.get_chrome_profile_association(reddit_username=reddit_user)
-        if association is None:
-            raise SystemExit(f"Unknown Reddit username association: {reddit_user}. Run `agentctl profiles associate` first.")
-    elif account_label:
-        association = db.get_chrome_profile_association(account_label=account_label)
-
-    if association:
-        return {
-            "accountLabel": account_label or association["account_label"],
-            "profileName": association["profile_name"],
-            "profilePath": association["profile_path"],
-            "debugAddress": association["debug_address"],
-            "redditUsername": association["reddit_username"],
-            "associationFound": True,
-        }
-
-    if account_label:
-        return {
-            "accountLabel": account_label,
-            "profileName": None,
-            "profilePath": None,
-            "debugAddress": None,
-            "redditUsername": None,
-            "associationFound": False,
-        }
-
-    raise SystemExit("Provide --account-label, --profile-name, or --reddit-user.")
-
-
-def probe_debug_address(address: str, timeout: float = 2.0) -> dict[str, Any]:
-    """Probe a Chrome DevTools endpoint without mutating browser state."""
-    endpoint = address if address.startswith(("http://", "https://")) else f"http://{address}"
-    endpoint = endpoint.rstrip("/") + "/json/version"
-    try:
-        with urlopen(endpoint, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        return {
-            "ok": True,
-            "debugAddress": address.replace("http://", "").replace("https://", ""),
-            "endpoint": endpoint,
-            "browser": payload.get("Browser"),
-            "protocolVersion": payload.get("Protocol-Version"),
-            "webSocketDebuggerUrl": payload.get("webSocketDebuggerUrl"),
-        }
-    except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
-        error = str(exc)
-        result = {
-            "ok": False,
-            "debugAddress": address,
-            "endpoint": endpoint,
-            "error": error,
-        }
-        if "Operation not permitted" in error or "Errno 1" in error:
-            result["hint"] = (
-                "Chrome may be reachable from the host, but this process is sandboxed "
-                "from local DevTools/loopback. Rerun with local DevTools access."
-            )
-        return result
-
-
-def _parse_toml_scalar(text: str) -> Any:
-    text = text.strip()
-    if not text:
-        return ""
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return text.strip('"')
-
-
-def _read_codex_automations() -> list[dict[str, Any]]:
-    automation_root = Path.home() / ".codex/automations"
-    automations = []
-    if not automation_root.exists():
-        return automations
-
-    for path in sorted(automation_root.glob("*/automation.toml")):
-        item: dict[str, Any] = {"path": str(path)}
-        try:
-            for raw_line in path.read_text().splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                if key in {"id", "kind", "name", "status", "rrule", "model"}:
-                    item[key] = _parse_toml_scalar(value)
-                elif key == "cwds":
-                    item[key] = _parse_toml_scalar(value)
-        except OSError as exc:
-            item["error"] = str(exc)
-        automations.append(item)
-    return automations
-
-
-def _read_crontab() -> dict[str, Any]:
-    try:
-        completed = subprocess.run(
-            ["crontab", "-l"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"available": False, "error": str(exc)}
-
-    if completed.returncode != 0:
-        return {"available": False, "error": completed.stderr.strip()}
-    return {
-        "available": True,
-        "entries": [line for line in completed.stdout.splitlines() if line.strip() and not line.lstrip().startswith("#")],
-    }
-
-
-def _action_entry_from_payload(payload_json: str) -> ActionEntry:
-    payload = json.loads(payload_json)
-    allowed = {
-        "link",
-        "action",
-        "comment",
-        "title",
-        "subreddit",
-        "body",
-        "flair",
-        "recipient",
-        "message",
-    }
-    return ActionEntry(**{key: payload.get(key) for key in allowed if key in payload})
-
-
-def _validate_canonical_post_actions(entries: list[ActionEntry]) -> list[dict[str, Any]]:
-    errors = []
-    for index, entry in enumerate(entries, start=1):
-        action = (entry.action or "").strip().lower()
-        if action not in CANONICAL_POST_ACTIONS:
-            continue
-        link = (entry.link or "").strip()
-        if not validate_reddit_url(link):
-            errors.append(
-                {
-                    "line": index,
-                    "link": link,
-                    "action": action,
-                    "error": "Post action requires a valid reddit.com URL.",
-                }
-            )
-            continue
-        if is_share_url(link):
-            errors.append(
-                {
-                    "line": index,
-                    "link": link,
-                    "action": action,
-                    "error": (
-                        "Reddit share links must be resolved before scheduling. "
-                        "Use the canonical /r/<subreddit>/comments/<post_id>/... URL."
-                    ),
-                }
-            )
-            continue
-        if not is_post_url(link):
-            errors.append(
-                {
-                    "line": index,
-                    "link": link,
-                    "action": action,
-                    "error": ("Post action requires a canonical Reddit post URL matching /r/<subreddit>/comments/<post_id>/..."),
-                }
-            )
-    return errors
-
-
-def _parse_agent_links_file(path: str) -> tuple[list[ActionEntry], list[dict[str, Any]]]:
-    entries = parse_links_file(path)
-    return entries, _validate_canonical_post_actions(entries)
-
-
-def _summary_payload(summary: Any) -> dict[str, Any]:
-    return {
-        "total": summary.total,
-        "succeeded": summary.succeeded,
-        "failed": summary.failed,
-        "results": [asdict(result) for result in summary.results],
-    }
-
-
 def command_status(args: argparse.Namespace) -> int:
-    config = _load_config(args)
-    db = BotDatabase(config.db_path)
-    try:
-        payload = {
-            "cwd": str(REPO_ROOT),
-            "dbPath": config.db_path,
-            "queueCounts": db.get_queue_counts(),
-            "activeLeases": db.list_leases(),
-            "accountLimits": db.list_account_limits(),
-            "profileAccountAssociations": db.list_chrome_profile_associations(),
-            "registeredSchedules": db.list_registered_schedules(),
-            "executor": executor_status(),
-            "codexAutomations": _read_codex_automations(),
-            "crontab": _read_crontab() if args.include_crontab else {"checked": False},
-            "savedChromeProfiles": discover_profiles_with_associations(db),
-            "defaultChromeDebugAddress": DEFAULT_DEBUG_ADDRESS,
-            "healerExtensionPath": str(DEFAULT_EXTENSION_PATH),
-            "liveActionPolicy": (
-                "Agents should register scheduled live Reddit mutations with "
-                "agentctl schedules register --links or submit immediate live "
-                "mutations through agentctl queue; manual direct main.py runs "
-                "remain supported for owner-controlled use."
-            ),
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return status_control.command_status(args)
 
 
 def command_profiles_list(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        payload = {
-            "profiles": discover_profiles_with_associations(db),
-            "associations": db.list_chrome_profile_associations(),
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return profile_control.command_profiles_list(args)
 
 
 def command_profiles_probe(args: argparse.Namespace) -> int:
-    _print_json(probe_debug_address(args.debug_address, timeout=args.timeout))
-    return 0
+    return profile_control.command_profiles_probe(args)
 
 
 def command_profiles_associate(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        profile = _profile_by_name(args.profile_name)
-        profile_path = args.profile_path or (profile or {}).get("profilePath")
-        debug_address = args.debug_address or (profile or {}).get("suggestedDebugAddress") or DEFAULT_DEBUG_ADDRESS
-        association = db.associate_chrome_profile(
-            args.profile_name,
-            args.reddit_user,
-            profile_path=profile_path,
-            debug_address=debug_address,
-            account_label=args.account_label,
-        )
-        payload = {
-            "association": association,
-            "profiles": discover_profiles_with_associations(db),
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return profile_control.command_profiles_associate(args)
 
 
 def command_profiles_resolve(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        payload = _resolve_profile_identity(
-            db,
-            account_label=args.account_label,
-            profile_name=args.profile_name,
-            reddit_user=args.reddit_user,
-        )
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return profile_control.command_profiles_resolve(args)
 
 
 def command_schedules_list(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        payload = {
-            "registeredSchedules": db.list_registered_schedules(),
-            "codexAutomations": _read_codex_automations(),
-            "crontab": _read_crontab() if args.include_crontab else {"checked": False},
-        }
-    finally:
-        db.close()
-    _print_json(payload)
+    _print_json(status_control.schedules_list_payload(args))
     return 0
 
 
@@ -590,616 +257,52 @@ def command_schedules_delete(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_due_schedules(args: argparse.Namespace) -> dict[str, Any]:
-    worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}"
-    now = _parse_dt(args.now) if args.now else utc_now()
-    db = _open_db(args)
-    processed = []
-    recovered_stale = []
-    try:
-        recovered_stale = db.recover_stale_queue_jobs(now_iso=now.isoformat())
-        schedules = db.lease_due_schedules(
-            worker_id,
-            now_iso=now.isoformat(),
-            lease_seconds=args.lease_seconds,
-            limit=args.limit,
-            schedule_id=getattr(args, "id", "") or None,
-        )
-        for schedule in schedules:
-            metadata = json.loads(schedule["metadata_json"] or "{}")
-            links_path = metadata.get("linksPath") or metadata.get("actionFile")
-            submitted_jobs = []
-            try:
-                if not links_path:
-                    raise ValueError("Schedule metadata must include linksPath.")
-                if not schedule["account"]:
-                    raise ValueError("Schedule must resolve to an account before execution.")
-                entries, link_errors = _parse_agent_links_file(links_path)
-                if link_errors:
-                    raise ValueError("Links file contains unsupported Reddit URL formats: " + json.dumps(link_errors, sort_keys=True))
-                for entry in entries:
-                    payload = asdict(entry)
-                    payload["_agent_profile"] = {
-                        "profileName": schedule["profile"],
-                        "profilePath": metadata.get("profilePath", ""),
-                        "debugAddress": metadata.get("debugAddress", ""),
-                        "redditUsername": metadata.get("redditUsername", ""),
-                    }
-                    submitted_jobs.append(
-                        db.enqueue_action(
-                            schedule["account"],
-                            entry.action,
-                            payload,
-                            link=entry.link,
-                            priority=args.priority,
-                            scheduled_for=now.isoformat(),
-                        )
-                    )
-                previous_runs = 1 if schedule.get("last_run_at") else 0
-                next_run = _next_run_after(
-                    schedule["rrule"] or "",
-                    now,
-                    previous_runs=previous_runs + 1,
-                )
-                db.complete_schedule_run(
-                    schedule["id"],
-                    next_run_at=next_run.isoformat() if next_run else None,
-                    last_run_at=now.isoformat(),
-                    deactivate=next_run is None,
-                )
-                processed.append(
-                    {
-                        "id": schedule["id"],
-                        "submitted": len(submitted_jobs),
-                        "jobIds": [job["id"] for job in submitted_jobs],
-                        "jobStatuses": [{"id": job["id"], "status": job["status"]} for job in submitted_jobs],
-                        "queuedJobIds": [job["id"] for job in submitted_jobs if job.get("status") == "queued"],
-                        "nextRunAt": next_run.isoformat() if next_run else None,
-                    }
-                )
-            except Exception as exc:
-                error = str(exc)
-                db.complete_schedule_run(
-                    schedule["id"],
-                    next_run_at=schedule["next_run_at"],
-                    last_run_at=None,
-                    error=error,
-                )
-                processed.append({"id": schedule["id"], "submitted": 0, "error": error})
-    finally:
-        db.close()
-
-    worker_payload = None
-    runnable_job_ids = [job_id for item in processed for job_id in item.get("queuedJobIds", [])]
-    total_submitted = sum(item.get("submitted", 0) for item in processed)
-    if args.run_worker and runnable_job_ids:
-        worker_args = argparse.Namespace(
-            config=args.config,
-            db_path=args.db_path,
-            worker_id=worker_id,
-            lease_seconds=args.lease_seconds,
-            max_jobs=len(runnable_job_ids),
-            once=True,
-            idle_sleep=0,
-            verbose=args.verbose,
-        )
-        worker_payload = _run_queue_worker(worker_args)
-        worker_payload["requestedMaxJobs"] = len(runnable_job_ids)
-
-    diagnostics = []
-    if total_submitted and not runnable_job_ids:
-        diagnostics.append(
-            {
-                "code": "no_runnable_jobs",
-                "message": ("Due schedules resolved only to active non-queued jobs. They may already be running because of deduplication."),
-            }
-        )
-
-    return {
-        "workerId": worker_id,
-        "dueSchedules": len(processed),
-        "processed": processed,
-        "recoveredStaleJobs": recovered_stale,
-        "runnableJobIds": runnable_job_ids,
-        "worker": worker_payload,
-        "diagnostics": diagnostics,
-    }
-
-
 def command_schedules_run_due(args: argparse.Namespace) -> int:
-    _print_json(_run_due_schedules(args))
-    return 0
-
-
-def _pid_is_running(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _pid_file_status() -> dict[str, Any]:
-    pid = None
-    if EXECUTOR_PID_PATH.exists():
-        raw_pid = EXECUTOR_PID_PATH.read_text(encoding="utf-8").strip()
-        if raw_pid:
-            try:
-                pid = int(raw_pid)
-            except ValueError:
-                pid = None
-    running = _pid_is_running(pid) if pid is not None else False
-    return {
-        "running": running,
-        "pid": pid,
-        "pidPath": str(EXECUTOR_PID_PATH),
-        "logPath": str(EXECUTOR_LOG_PATH),
-    }
-
-
-def _launchctl_domain() -> str:
-    return f"gui/{os.getuid()}"
-
-
-def _agentctl_base_command(args: argparse.Namespace) -> list[str]:
-    command = [sys.executable, str(_agentctl_script_path())]
-    if args.config:
-        command.extend(["--config", args.config])
-    if args.db_path:
-        command.extend(["--db-path", args.db_path])
-    return command
-
-
-def _launch_agent_program_arguments(args: argparse.Namespace) -> list[str]:
-    command = _agentctl_base_command(args)
-    command.extend(
-        [
-            "schedules",
-            "run-due",
-            "--run-worker",
-        ]
-    )
-    return command
-
-
-def _launch_agent_plist(args: argparse.Namespace) -> dict[str, Any]:
-    EXECUTOR_DIR.mkdir(parents=True, exist_ok=True)
-    return {
-        "Label": EXECUTOR_LABEL,
-        "ProgramArguments": _launch_agent_program_arguments(args),
-        "WorkingDirectory": str(REPO_ROOT),
-        "StartInterval": int(getattr(args, "start_interval", 60)),
-        "RunAtLoad": True,
-        "StandardOutPath": str(EXECUTOR_LOG_PATH),
-        "StandardErrorPath": str(EXECUTOR_LOG_PATH),
-        "EnvironmentVariables": {
-            "PYTHONUNBUFFERED": "1",
-        },
-    }
-
-
-def _write_launch_agent(args: argparse.Namespace) -> Path:
-    plist_path = _launch_agent_path()
-    plist_path.parent.mkdir(parents=True, exist_ok=True)
-    with plist_path.open("wb") as file_obj:
-        plistlib.dump(_launch_agent_plist(args), file_obj, sort_keys=False)
-    return plist_path
-
-
-def _launchctl_print() -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["launchctl", "print", f"{_launchctl_domain()}/{EXECUTOR_LABEL}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def _launchd_status() -> dict[str, Any]:
-    if platform.system() != "Darwin":
-        pid_status = _pid_file_status()
-        return {
-            "method": "pid-loop",
-            "available": False,
-            "running": pid_status["running"],
-            "pid": pid_status["pid"],
-            "label": EXECUTOR_LABEL,
-            "plistPath": str(_launch_agent_path()),
-            "pidPath": pid_status["pidPath"],
-            "logPath": pid_status["logPath"],
-            "error": "launchd executor is only available on macOS.",
-        }
-    result = _launchctl_print()
-    return {
-        "method": "launchd",
-        "available": True,
-        "running": result.returncode == 0,
-        "label": EXECUTOR_LABEL,
-        "plistPath": str(_launch_agent_path()),
-        "pidPath": str(EXECUTOR_PID_PATH),
-        "logPath": str(EXECUTOR_LOG_PATH),
-        "launchctlReturnCode": result.returncode,
-    }
-
-
-def executor_status() -> dict[str, Any]:
-    return _launchd_status()
-
-
-def _ensure_pid_loop(args: argparse.Namespace) -> dict[str, Any]:
-    status = _pid_file_status()
-    if status["running"]:
-        return {"ensured": True, "started": False, "method": "pid-loop", **status}
-
-    EXECUTOR_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = EXECUTOR_LOG_PATH.open("ab")
-    command = _agentctl_base_command(args)
-    command.extend(
-        [
-            "executor",
-            "run",
-            "--interval",
-            str(getattr(args, "executor_interval", 15.0)),
-            "--run-worker",
-        ]
-    )
-    process = subprocess.Popen(
-        command,
-        cwd=str(REPO_ROOT),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    EXECUTOR_PID_PATH.write_text(f"{process.pid}\n", encoding="utf-8")
-    return {
-        "ensured": True,
-        "started": True,
-        "method": "pid-loop",
-        "running": True,
-        "pid": process.pid,
-        "pidPath": str(EXECUTOR_PID_PATH),
-        "logPath": str(EXECUTOR_LOG_PATH),
-    }
-
-
-def ensure_executor_service(args: argparse.Namespace) -> dict[str, Any]:
-    if platform.system() != "Darwin":
-        if getattr(args, "allow_pid_fallback", False):
-            return _ensure_pid_loop(args)
-        return {
-            "ensured": False,
-            **executor_status(),
-        }
-
-    plist_path = _write_launch_agent(args)
-    domain = _launchctl_domain()
-    bootstrap = subprocess.run(
-        ["launchctl", "bootstrap", domain, str(plist_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if bootstrap.returncode not in (0, 5):
-        return {
-            "ensured": False,
-            **executor_status(),
-            "error": (bootstrap.stderr or bootstrap.stdout).strip(),
-        }
-    kickstart = subprocess.run(
-        ["launchctl", "kickstart", "-k", f"{domain}/{EXECUTOR_LABEL}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    status = executor_status()
-    return {
-        "ensured": kickstart.returncode == 0 or status["running"],
-        **status,
-        "plistWritten": str(plist_path),
-        "bootstrapReturnCode": bootstrap.returncode,
-        "kickstartReturnCode": kickstart.returncode,
-        "error": None if kickstart.returncode == 0 or status["running"] else (kickstart.stderr or kickstart.stdout).strip(),
-    }
+    return queue_control.command_schedules_run_due(args)
 
 
 def command_executor_ensure(args: argparse.Namespace) -> int:
-    _print_json(ensure_executor_service(args))
-    return 0
+    return executor_control.command_executor_ensure(args)
 
 
 def command_executor_status(args: argparse.Namespace) -> int:
-    _print_json(executor_status())
-    return 0
+    return executor_control.command_executor_status(args)
 
 
 def command_executor_stop(args: argparse.Namespace) -> int:
-    if platform.system() == "Darwin":
-        result = subprocess.run(
-            ["launchctl", "bootout", _launchctl_domain(), str(_launch_agent_path())],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if EXECUTOR_PID_PATH.exists():
-            EXECUTOR_PID_PATH.unlink()
-        _print_json(
-            {
-                "stopped": result.returncode == 0,
-                **executor_status(),
-                "bootoutReturnCode": result.returncode,
-                "error": None if result.returncode == 0 else (result.stderr or result.stdout).strip(),
-            }
-        )
-        return 0
-
-    status = _pid_file_status()
-    stopped = False
-    if status["running"] and status["pid"] is not None:
-        os.kill(status["pid"], signal.SIGTERM)
-        stopped = True
-    if EXECUTOR_PID_PATH.exists():
-        EXECUTOR_PID_PATH.unlink()
-    _print_json({"stopped": stopped, **executor_status()})
-    return 0
+    return executor_control.command_executor_stop(args)
 
 
 def command_executor_run(args: argparse.Namespace) -> int:
-    worker_id = args.worker_id or f"executor:{socket.gethostname()}:{os.getpid()}"
-    EXECUTOR_DIR.mkdir(parents=True, exist_ok=True)
-    EXECUTOR_PID_PATH.write_text(f"{os.getpid()}\n", encoding="utf-8")
-    iterations = 0
-    try:
-        while True:
-            run_args = argparse.Namespace(
-                config=args.config,
-                db_path=args.db_path,
-                worker_id=worker_id,
-                now="",
-                lease_seconds=args.lease_seconds,
-                limit=args.limit,
-                priority=args.priority,
-                run_worker=args.run_worker,
-                verbose=args.verbose,
-            )
-            payload = _run_due_schedules(run_args)
-            payload["executor"] = {
-                "pid": os.getpid(),
-                "iteration": iterations + 1,
-                "interval": args.interval,
-            }
-            print(json.dumps(payload, sort_keys=True), flush=True)
-            iterations += 1
-            if args.max_iterations and iterations >= args.max_iterations:
-                break
-            time.sleep(args.interval)
-    finally:
-        status = executor_status()
-        if status["pid"] == os.getpid() and EXECUTOR_PID_PATH.exists():
-            EXECUTOR_PID_PATH.unlink()
-    return 0
+    return executor_control.command_executor_run(args, run_due_schedules=_run_due_schedules)
 
 
 def command_limits_list(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        payload = {
-            "accountLimits": db.list_account_limits(),
-            "activeReservations": db.list_account_reservations(limit=args.limit),
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return limits_control.command_limits_list(args)
 
 
 def command_limits_set(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        db.set_account_limit(
-            args.account,
-            args.daily_action_quota,
-            action=args.action,
-        )
-        payload = {"accountLimits": db.list_account_limits()}
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return limits_control.command_limits_set(args)
 
 
 def command_queue_submit(args: argparse.Namespace) -> int:
-    entries, link_errors = _parse_agent_links_file(args.links)
-    if link_errors:
-        _print_json(
-            {
-                "submitted": 0,
-                "ok": False,
-                "error": "Links file contains unsupported Reddit URL formats.",
-                "linkErrors": link_errors,
-            }
-        )
-        return 2
-
-    db = _open_db(args)
-    try:
-        identity = _resolve_profile_identity(
-            db,
-            account_label=args.account_label,
-            profile_name=args.profile_name,
-            reddit_user=args.reddit_user,
-        )
-        jobs = []
-        for entry in entries:
-            payload = asdict(entry)
-            payload["_agent_profile"] = {
-                "profileName": identity["profileName"],
-                "profilePath": identity["profilePath"],
-                "debugAddress": identity["debugAddress"],
-                "redditUsername": identity["redditUsername"],
-            }
-            jobs.append(
-                db.enqueue_action(
-                    identity["accountLabel"],
-                    entry.action,
-                    payload,
-                    link=entry.link,
-                    priority=args.priority,
-                    scheduled_for=args.scheduled_for,
-                    max_attempts=args.max_attempts,
-                )
-            )
-        payload = {
-            "submitted": len(jobs),
-            "resolvedIdentity": identity,
-            "jobs": jobs,
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return queue_control.command_queue_submit(args)
 
 
 def command_queue_list(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        payload = {
-            "queueCounts": db.get_queue_counts(),
-            "jobs": db.list_queue_jobs(
-                status=args.status,
-                account=getattr(args, "account", "") or None,
-                limit=args.limit,
-            ),
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return queue_control.command_queue_list(args)
 
 
 def command_queue_recover_stale(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        recovered = db.recover_stale_queue_jobs(now_iso=args.now or None)
-        payload = {
-            "recovered": len(recovered),
-            "jobs": recovered,
-            "queueCounts": db.get_queue_counts(),
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
+    return queue_control.command_queue_recover_stale(args)
 
 
 def command_queue_retry(args: argparse.Namespace) -> int:
-    db = _open_db(args)
-    try:
-        if args.id is not None:
-            retried = [db.retry_queue_job(args.id)]
-        else:
-            retried = db.retry_failed_jobs(account=args.account or None)
-        payload = {
-            "retried": retried,
-            "count": sum(1 for item in retried if item.get("retried")),
-            "queueCounts": db.get_queue_counts(),
-        }
-    finally:
-        db.close()
-    _print_json(payload)
-    return 0
-
-
-def _run_queue_worker(args: argparse.Namespace) -> dict[str, Any]:
-    from main import run_account
-
-    config = _load_config(args)
-    worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}"
-    logger = setup_structured_logger(
-        "reddit-bot.agentctl",
-        level=logging.INFO,
-        log_dir=config.log_dir,
-        log_file=config.log_file,
-        console=args.verbose,
-        file_level=logging.INFO,
-    )
-    processed = 0
-
-    while args.max_jobs == 0 or processed < args.max_jobs:
-        db = BotDatabase(config.db_path)
-        job: dict[str, Any] | None = None
-        lease_acquired = False
-        lease_resource = config.chrome_debugging_address or config.chrome_user_data_dir or DEFAULT_DEBUG_ADDRESS
-        try:
-            job = db.lease_next_job(worker_id, lease_seconds=args.lease_seconds)
-            if job is None:
-                if args.once:
-                    return {"workerId": worker_id, "processed": processed, "idle": True}
-                time.sleep(args.idle_sleep)
-                continue
-
-            job_payload = json.loads(job["payload_json"])
-            agent_profile = job_payload.get("_agent_profile") or {}
-            lease_resource = agent_profile.get("debugAddress") or agent_profile.get("profilePath") or lease_resource
-            lease_acquired, lease_message = db.acquire_lease(
-                "chrome_profile",
-                lease_resource,
-                worker_id,
-                ttl_seconds=args.lease_seconds,
-                metadata={"jobId": job["id"]},
-            )
-            if not lease_acquired:
-                db.release_queue_job(job["id"], lease_message)
-                continue
-
-            entry = _action_entry_from_payload(job["payload_json"])
-            run_config = copy.deepcopy(config)
-            run_config.screenshot_on_failure = True
-            if agent_profile.get("debugAddress"):
-                run_config.use_existing_chrome = True
-                run_config.chrome_debugging_address = agent_profile["debugAddress"]
-                run_config.chrome_extension_healer_enabled = True
-                run_config.parallel_accounts = 1
-            elif agent_profile.get("profilePath"):
-                run_config.use_existing_chrome = True
-                run_config.chrome_user_data_dir = agent_profile["profilePath"]
-                run_config.parallel_accounts = 1
-
-            summary = run_account(
-                Account(username=job["account"], password=""),
-                [entry],
-                run_config,
-                logger,
-            )
-            result_payload = _summary_payload(summary)
-            success = summary.failed == 0
-            db.complete_queue_job(
-                job["id"],
-                success=success,
-                result=result_payload,
-                error=None if success else "One or more action results failed.",
-            )
-            processed += 1
-        except Exception as exc:
-            if job is not None:
-                db.release_queue_job(job["id"], str(exc))
-            logger.exception("Agent queue worker failed while processing a job")
-            if args.once:
-                raise
-        finally:
-            if lease_acquired:
-                db.release_lease("chrome_profile", lease_resource, worker_id)
-            db.close()
-
-    return {"workerId": worker_id, "processed": processed, "idle": False}
+    return queue_control.command_queue_retry(args)
 
 
 def command_queue_worker(args: argparse.Namespace) -> int:
-    _print_json(_run_queue_worker(args))
-    return 0
+    return queue_control.command_queue_worker(args)
 
 
 def _attached_chrome_driver(debug_address: str):
