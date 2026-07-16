@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -16,6 +17,8 @@ DEFAULT_PROFILE_PREFIX = "Chrome Reddit Bot Debug Profile"
 DEFAULT_PROFILE_NAME = "Chrome Reddit Bot Debug Profile"
 DEFAULT_DEBUG_ADDRESS = "127.0.0.1:9222"
 DEFAULT_EXTENSION_PATH = Path(__file__).resolve().parents[2] / "chrome_extension/reddit_healer"
+# Env override when no CLI identity is given and multiple (or zero) associations exist.
+DEFAULT_USER_ENV = "REDDIT_BOT_DEFAULT_USER"
 
 
 def profile_search_root() -> Path:
@@ -91,6 +94,80 @@ def discover_profiles_with_associations(db: BotDatabase) -> list[dict[str, Any]]
     return profiles
 
 
+def _nonempty(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def identity_resolution_help() -> str:
+    """Human-readable guidance when identity cannot be resolved."""
+    return (
+        "Provide --reddit-user, --profile-name, or --account-label; "
+        "associate exactly one Chrome profile "
+        "(`agentctl profiles associate` / `agentctl profiles list`); "
+        f"or set {DEFAULT_USER_ENV}."
+    )
+
+
+def association_to_identity(
+    association: dict[str, Any],
+    *,
+    account_label: str | None = None,
+    resolved_via: str,
+) -> dict[str, Any]:
+    """Map a chrome_profile_accounts row to the standard identity payload."""
+    return {
+        "accountLabel": account_label or association["account_label"],
+        "profileName": association["profile_name"],
+        "profilePath": association["profile_path"],
+        "debugAddress": association["debug_address"],
+        "redditUsername": association["reddit_username"],
+        "associationFound": True,
+        "resolvedVia": resolved_via,
+    }
+
+
+def resolve_default_association(db: BotDatabase) -> tuple[dict[str, Any], str]:
+    """Resolve default association when no CLI identity flag is provided.
+
+    Order:
+      1. Exactly one row in ``chrome_profile_accounts``
+      2. ``REDDIT_BOT_DEFAULT_USER`` env (must match an association)
+      3. Fail with a clear error
+
+    Returns ``(association, resolved_via)``.
+    """
+    associations = db.list_chrome_profile_associations()
+    if len(associations) == 1:
+        return associations[0], "single_association"
+
+    env_user = _nonempty(os.environ.get(DEFAULT_USER_ENV))
+    if env_user:
+        association = db.get_chrome_profile_association(reddit_username=env_user)
+        if association is None:
+            raise SystemExit(
+                f"{DEFAULT_USER_ENV}={env_user!r} is set but no Chrome profile "
+                "association exists for that user. "
+                "Run `agentctl profiles associate` first, or "
+                "`agentctl profiles list` to inspect associations."
+            )
+        return association, f"env:{DEFAULT_USER_ENV}"
+
+    if len(associations) > 1:
+        listed = ", ".join(
+            f"u/{item['reddit_username']}@{item['profile_name']}" for item in associations
+        )
+        raise SystemExit(
+            f"Multiple Chrome profile associations found ({listed}). " + identity_resolution_help()
+        )
+
+    raise SystemExit(
+        "No Reddit identity specified and no default could be resolved. " + identity_resolution_help()
+    )
+
+
 def resolve_profile_identity(
     db: BotDatabase,
     *,
@@ -98,10 +175,20 @@ def resolve_profile_identity(
     profile_name: str | None = None,
     reddit_user: str | None = None,
 ) -> dict[str, Any]:
-    """Resolve account/profile identity from an explicit label, profile, or user."""
+    """Resolve account/profile identity from an explicit label, profile, or user.
+
+    When no explicit identity is provided, falls back to a sole DB association
+    or ``REDDIT_BOT_DEFAULT_USER`` (see :func:`resolve_default_association`).
+    """
+    account_label = _nonempty(account_label)
+    profile_name = _nonempty(profile_name)
+    reddit_user = _nonempty(reddit_user)
+
     association = None
+    resolved_via: str | None = None
     if profile_name:
         association = db.get_chrome_profile_association(profile_name=profile_name)
+        resolved_via = "profile_name"
         if association is None:
             profile = profile_by_name(profile_name)
             if profile is None:
@@ -113,9 +200,11 @@ def resolve_profile_identity(
                 "debugAddress": profile["suggestedDebugAddress"],
                 "redditUsername": None,
                 "associationFound": False,
+                "resolvedVia": resolved_via,
             }
     elif reddit_user:
         association = db.get_chrome_profile_association(reddit_username=reddit_user)
+        resolved_via = "reddit_user"
         if association is None:
             raise SystemExit(
                 f"Unknown Reddit username association: {reddit_user}. "
@@ -123,16 +212,14 @@ def resolve_profile_identity(
             )
     elif account_label:
         association = db.get_chrome_profile_association(account_label=account_label)
+        resolved_via = "account_label"
 
     if association:
-        return {
-            "accountLabel": account_label or association["account_label"],
-            "profileName": association["profile_name"],
-            "profilePath": association["profile_path"],
-            "debugAddress": association["debug_address"],
-            "redditUsername": association["reddit_username"],
-            "associationFound": True,
-        }
+        return association_to_identity(
+            association,
+            account_label=account_label,
+            resolved_via=resolved_via or "association",
+        )
 
     if account_label:
         return {
@@ -142,9 +229,11 @@ def resolve_profile_identity(
             "debugAddress": None,
             "redditUsername": None,
             "associationFound": False,
+            "resolvedVia": "account_label",
         }
 
-    raise SystemExit("Provide --account-label, --profile-name, or --reddit-user.")
+    association, via = resolve_default_association(db)
+    return association_to_identity(association, resolved_via=via)
 
 
 def probe_debug_address(address: str, timeout: float = 2.0) -> dict[str, Any]:

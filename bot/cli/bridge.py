@@ -24,9 +24,11 @@ from bot.control.errors import CliError
 from bot.database import BotDatabase
 from bot.utils.input_parser import VALID_ACTIONS, parse_links_file
 
-DEFAULT_REDDIT_USER = "u/Particular-Arm2102"
 DEFAULT_ACTIONS_DIR = REPO_ROOT / ".agent-actions"
 ERROR_KEYWORDS = ("error", "failed", "exception", "traceback")
+# Re-export for callers that previously imported DEFAULT_REDDIT_USER from bridge.
+# Runtime defaults come from chrome_profile_accounts / REDDIT_BOT_DEFAULT_USER.
+DEFAULT_REDDIT_USER = None
 
 def _global_agentctl_args(args: argparse.Namespace) -> list[str]:
     control_args: list[str] = []
@@ -77,12 +79,14 @@ def _open_db(args: argparse.Namespace) -> BotDatabase:
 
 
 def _identity_args(args: argparse.Namespace) -> list[str]:
+    """CLI identity flags for agentctl. Empty means agentctl applies DB/env defaults."""
     if getattr(args, "account_label", None):
         return ["--account-label", args.account_label]
     if getattr(args, "profile_name", None):
         return ["--profile-name", args.profile_name]
-    reddit_user = getattr(args, "reddit_user", None) or DEFAULT_REDDIT_USER
-    return ["--reddit-user", reddit_user]
+    if getattr(args, "reddit_user", None):
+        return ["--reddit-user", args.reddit_user]
+    return []
 
 
 def _debug_host_port(debug_address: str) -> tuple[str, str]:
@@ -184,12 +188,36 @@ def _profile_preflight(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _schedule_identity_args(args: argparse.Namespace) -> list[str]:
+    """Identity flags for schedules register. Empty → agentctl may leave account blank.
+
+    For live schedule registration without explicit flags, resolve the sole
+    association / env default so the schedule binds to an account.
+    """
     if getattr(args, "account_label", None):
         return ["--account", args.account_label]
     if getattr(args, "profile_name", None):
         return ["--profile-name", args.profile_name]
-    reddit_user = getattr(args, "reddit_user", None) or DEFAULT_REDDIT_USER
-    return ["--reddit-user", reddit_user]
+    if getattr(args, "reddit_user", None):
+        return ["--reddit-user", args.reddit_user]
+    # Best-effort default identity so schedule add still binds an account when
+    # a single association (or REDDIT_BOT_DEFAULT_USER) is available.
+    try:
+        from bot.control.profiles import resolve_profile_identity
+
+        db = _open_db(args)
+        try:
+            identity = resolve_profile_identity(db)
+        finally:
+            db.close()
+    except SystemExit:
+        return []
+    if identity.get("profileName"):
+        return ["--profile-name", identity["profileName"]]
+    if identity.get("redditUsername"):
+        return ["--reddit-user", identity["redditUsername"]]
+    if identity.get("accountLabel"):
+        return ["--account", identity["accountLabel"]]
+    return []
 
 
 def _repo_codex_automations(payload: dict[str, Any], *, include_all: bool = False) -> list[dict[str, Any]]:

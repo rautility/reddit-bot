@@ -531,10 +531,13 @@ def _print_capabilities(payload: dict[str, Any]) -> None:
     print("\nDefaults")
     _print_kv(
         [
-            ("reddit user", defaults.get("redditUser")),
+            ("reddit user", defaults.get("redditUser") or "(resolved from DB/env)"),
+            ("resolved via", defaults.get("redditUserResolvedVia") or "—"),
             ("profile name", defaults.get("profileName")),
             ("debug address", defaults.get("debugAddress")),
             ("identity flags", ", ".join(defaults.get("identityOptions", []))),
+            ("identity resolution", defaults.get("identityResolution")),
+            ("default user env", defaults.get("defaultUserEnv")),
         ]
     )
     limits = data.get("accountLimits", [])

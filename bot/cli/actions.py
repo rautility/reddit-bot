@@ -26,7 +26,7 @@ from bot.control.errors import CliError
 from bot.control.resolve import resolve_reddit_url
 from bot.utils.clock import utc_now
 
-DEFAULT_REDDIT_USER = bridge.DEFAULT_REDDIT_USER
+DEFAULT_REDDIT_USER = bridge.DEFAULT_REDDIT_USER  # None; resolve via DB/env
 DEFAULT_ACTIONS_DIR = bridge.DEFAULT_ACTIONS_DIR
 INLINE_ACTION_FIELDS = (
     "link",
@@ -347,14 +347,39 @@ def command_resolve_url(args: argparse.Namespace) -> int:
 
 
 def command_capabilities(args: argparse.Namespace) -> int:
+    from bot.control.profiles import DEFAULT_USER_ENV, resolve_profile_identity
 
     data = describe_actions()
     command_name = getattr(args, "command_name", None) or "capabilities"
+    resolved_user = None
+    resolved_via = None
+    account_limits: list = []
+    try:
+        db = _open_db(args)
+        try:
+            account_limits = db.list_account_limits()
+            try:
+                identity = resolve_profile_identity(db)
+                resolved_user = identity.get("redditUsername")
+                resolved_via = identity.get("resolvedVia")
+            except SystemExit:
+                pass
+        finally:
+            db.close()
+    except Exception:
+        account_limits = []
+
     data["defaults"] = {
-        "redditUser": DEFAULT_REDDIT_USER,
+        "redditUser": resolved_user,
+        "redditUserResolvedVia": resolved_via,
         "profileName": DEFAULT_PROFILE_NAME,
         "debugAddress": DEFAULT_DEBUG_ADDRESS,
         "identityOptions": ["--reddit-user", "--profile-name", "--account-label"],
+        "defaultUserEnv": DEFAULT_USER_ENV,
+        "identityResolution": (
+            "explicit --reddit-user/--profile-name/--account-label; "
+            f"else sole chrome_profile_accounts row; else {DEFAULT_USER_ENV}; else error"
+        ),
     }
     data["howToRun"] = {
         "oneShot": "reddit-tool do --action <action> --link <url> [field flags]",
@@ -365,14 +390,7 @@ def command_capabilities(args: argparse.Namespace) -> int:
         "schedule": "reddit-tool schedule add --action <action> --link <url> --at <iso>",
         "scheduleSearchUpvote": ("reddit-tool schedule add --action search_upvote --query <search query> --at <iso>"),
     }
-    try:
-        db = _open_db(args)
-        try:
-            data["accountLimits"] = db.list_account_limits()
-        finally:
-            db.close()
-    except Exception:
-        data["accountLimits"] = []
+    data["accountLimits"] = account_limits
 
     action_name = getattr(args, "action_name", None)
     if action_name:

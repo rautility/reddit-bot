@@ -9,7 +9,7 @@ from bot.cli import actions, bridge
 from bot.control import schedules as schedule_control
 from bot.control.errors import CliError
 
-DEFAULT_REDDIT_USER = bridge.DEFAULT_REDDIT_USER
+DEFAULT_REDDIT_USER = bridge.DEFAULT_REDDIT_USER  # None; resolve via DB/env
 DEFAULT_ACTIONS_DIR = bridge.DEFAULT_ACTIONS_DIR
 _parse_at = schedule_control.parse_at
 _parse_time = schedule_control.parse_time

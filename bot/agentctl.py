@@ -30,6 +30,7 @@ from bot.control.profiles import (
     DEFAULT_EXTENSION_PATH,
     DEFAULT_PROFILE_NAME,
     DEFAULT_PROFILE_PREFIX,
+    DEFAULT_USER_ENV,
     discover_profiles_with_associations,
     discover_saved_profiles,
     probe_debug_address,
@@ -55,6 +56,7 @@ __all__ = [
     "DEFAULT_EXTENSION_PATH",
     "DEFAULT_PROFILE_NAME",
     "DEFAULT_PROFILE_PREFIX",
+    "DEFAULT_USER_ENV",
     "EXECUTOR_DIR",
     "EXECUTOR_LABEL",
     "EXECUTOR_LOG_PATH",
@@ -66,6 +68,7 @@ __all__ = [
     "executor_status",
     "main",
     "probe_debug_address",
+    "resolve_profile_identity",
     "run_due_schedules",
     "run_queue_worker",
 ]
@@ -488,10 +491,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     profiles_associate_parser.set_defaults(func=command_profiles_associate)
     profiles_resolve_parser = profiles_subparsers.add_parser("resolve")
-    profile_resolve_group = profiles_resolve_parser.add_mutually_exclusive_group(required=True)
-    profile_resolve_group.add_argument("--profile-name")
-    profile_resolve_group.add_argument("--reddit-user")
-    profile_resolve_group.add_argument("--account-label")
+    profile_resolve_group = profiles_resolve_parser.add_mutually_exclusive_group(required=False)
+    profile_resolve_group.add_argument(
+        "--profile-name",
+        help="Chrome profile name. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
+    profile_resolve_group.add_argument(
+        "--reddit-user",
+        help="Reddit username. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
+    profile_resolve_group.add_argument("--account-label", help="Execution account label.")
     profiles_resolve_parser.set_defaults(func=command_profiles_resolve)
 
     schedules_parser = subparsers.add_parser("schedules")
@@ -593,10 +602,19 @@ def build_parser() -> argparse.ArgumentParser:
     queue_parser = subparsers.add_parser("queue")
     queue_subparsers = queue_parser.add_subparsers(dest="queue_command", required=True)
     queue_submit_parser = queue_subparsers.add_parser("submit")
-    queue_identity_group = queue_submit_parser.add_mutually_exclusive_group(required=True)
-    queue_identity_group.add_argument("--account-label")
-    queue_identity_group.add_argument("--profile-name")
-    queue_identity_group.add_argument("--reddit-user")
+    queue_identity_group = queue_submit_parser.add_mutually_exclusive_group(required=False)
+    queue_identity_group.add_argument(
+        "--account-label",
+        help="Execution account label. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
+    queue_identity_group.add_argument(
+        "--profile-name",
+        help="Chrome profile name. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
+    queue_identity_group.add_argument(
+        "--reddit-user",
+        help="Reddit username. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
     queue_submit_parser.add_argument("--links", required=True)
     queue_submit_parser.add_argument("--priority", type=int, default=100)
     queue_submit_parser.add_argument("--scheduled-for", default=None)
@@ -628,10 +646,19 @@ def build_parser() -> argparse.ArgumentParser:
     vote_parser = subparsers.add_parser("vote")
     vote_subparsers = vote_parser.add_subparsers(dest="vote_command", required=True)
     vote_click_visible_parser = vote_subparsers.add_parser("click-visible")
-    vote_identity_group = vote_click_visible_parser.add_mutually_exclusive_group(required=True)
-    vote_identity_group.add_argument("--account-label")
-    vote_identity_group.add_argument("--profile-name")
-    vote_identity_group.add_argument("--reddit-user")
+    vote_identity_group = vote_click_visible_parser.add_mutually_exclusive_group(required=False)
+    vote_identity_group.add_argument(
+        "--account-label",
+        help="Execution account label. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
+    vote_identity_group.add_argument(
+        "--profile-name",
+        help="Chrome profile name. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
+    vote_identity_group.add_argument(
+        "--reddit-user",
+        help="Reddit username. When omitted, uses sole DB association or REDDIT_BOT_DEFAULT_USER.",
+    )
     vote_click_visible_parser.add_argument("--url", required=True)
     vote_click_visible_parser.add_argument("--action", choices=["upvote", "downvote"], required=True)
     vote_click_visible_parser.add_argument("--debug-address", default="")

@@ -27,6 +27,11 @@ from bot.agentctl import (
     executor_status,
     probe_debug_address,
 )
+from bot.control.profiles import (
+    DEFAULT_USER_ENV,
+    identity_resolution_help,
+    resolve_profile_identity,
+)
 from bot.database import BotDatabase
 
 # Checks whose failure means exit code != 0.
@@ -37,8 +42,6 @@ EXIT_POLICY = (
     "Soft failures (Chrome down, bridge, executor, quotas) leave process exit 0 "
     "so agents can parse JSON."
 )
-
-DEFAULT_REDDIT_USER = "u/Particular-Arm2102"
 
 ProbeFn = Callable[[str], dict[str, Any]]
 ExecutorStatusFn = Callable[[], dict[str, Any]]
@@ -241,54 +244,63 @@ def _check_default_identity(
 ) -> tuple[dict[str, Any], str | None]:
     """Resolve default/requested identity. Returns (check, debug_address or None)."""
     try:
-        association = None
-        resolved_via = None
-        if account_label:
-            association = db.get_chrome_profile_association(account_label=account_label)
-            resolved_via = f"account_label={account_label}"
-        if association is None and profile_name:
-            association = db.get_chrome_profile_association(profile_name=profile_name)
-            resolved_via = f"profile_name={profile_name}"
-        if association is None and reddit_user:
-            association = db.get_chrome_profile_association(reddit_username=reddit_user)
-            resolved_via = f"reddit_user={reddit_user}"
-        if association is None:
-            # Fall back to project defaults.
-            association = db.get_chrome_profile_association(profile_name=DEFAULT_PROFILE_NAME)
-            if association is not None:
-                resolved_via = f"default profile_name={DEFAULT_PROFILE_NAME}"
-            else:
-                association = db.get_chrome_profile_association(
-                    reddit_username=DEFAULT_REDDIT_USER
-                )
-                if association is not None:
-                    resolved_via = f"default reddit_user={DEFAULT_REDDIT_USER}"
-
-        if association is None:
+        try:
+            identity = resolve_profile_identity(
+                db,
+                account_label=account_label,
+                profile_name=profile_name,
+                reddit_user=reddit_user,
+            )
+        except SystemExit as exc:
+            message = exc.code if isinstance(exc.code, str) else (
+                "No Chrome profile association for the requested/default identity. "
+                + identity_resolution_help()
+            )
             return (
                 _check(
                     "default_identity",
                     False,
-                    "No Chrome profile association for the requested/default identity. "
-                    "Run profiles associate first.",
+                    message,
                     data={
                         "redditUser": reddit_user,
                         "profileName": profile_name,
                         "accountLabel": account_label,
                         "defaults": {
                             "profileName": DEFAULT_PROFILE_NAME,
-                            "redditUser": DEFAULT_REDDIT_USER,
+                            "defaultUserEnv": DEFAULT_USER_ENV,
+                            "resolution": (
+                                "explicit flags → sole chrome_profile_accounts row → "
+                                f"{DEFAULT_USER_ENV} env"
+                            ),
                         },
                     },
                 ),
                 None,
             )
 
-        debug_address = association.get("debug_address") or DEFAULT_DEBUG_ADDRESS
+        if not identity.get("associationFound") and not identity.get("debugAddress"):
+            return (
+                _check(
+                    "default_identity",
+                    False,
+                    "Identity resolved without a Chrome profile association. "
+                    "Run `agentctl profiles associate` first.",
+                    data={
+                        "identity": identity,
+                        "redditUser": reddit_user,
+                        "profileName": profile_name,
+                        "accountLabel": account_label,
+                    },
+                ),
+                None,
+            )
+
+        debug_address = identity.get("debugAddress") or DEFAULT_DEBUG_ADDRESS
+        resolved_via = identity.get("resolvedVia") or "association"
         detail = (
             f"Resolved via {resolved_via}: "
-            f"user={association.get('reddit_username')} "
-            f"profile={association.get('profile_name')} "
+            f"user={identity.get('redditUsername')} "
+            f"profile={identity.get('profileName')} "
             f"debug={debug_address}"
         )
         return (
@@ -297,7 +309,7 @@ def _check_default_identity(
                 True,
                 detail,
                 data={
-                    "association": association,
+                    "identity": identity,
                     "resolvedVia": resolved_via,
                     "debugAddress": debug_address,
                 },

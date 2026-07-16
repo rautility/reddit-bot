@@ -11,10 +11,12 @@ from bot.agentctl import DEFAULT_PROFILE_NAME, REPO_ROOT  # noqa: F401
 from bot.cli import actions, bridge, menu, render
 from bot.control import schedules as schedule_control
 from bot.control.errors import CliError
+from bot.control.profiles import DEFAULT_USER_ENV
 from bot.utils.input_parser import VALID_ACTIONS
 
-# Public constants (tests / imports)
-DEFAULT_REDDIT_USER = bridge.DEFAULT_REDDIT_USER
+# Public constants (tests / imports). DEFAULT_REDDIT_USER is no longer a
+# hardcoded username; identity resolves from DB associations / env.
+DEFAULT_REDDIT_USER = bridge.DEFAULT_REDDIT_USER  # always None
 DEFAULT_ACTIONS_DIR = bridge.DEFAULT_ACTIONS_DIR
 ERROR_KEYWORDS = bridge.ERROR_KEYWORDS
 INLINE_ACTION_FIELDS = actions.INLINE_ACTION_FIELDS
@@ -114,8 +116,17 @@ _poll_job_outcomes = actions._poll_job_outcomes
 
 def _add_identity_options(parser: argparse.ArgumentParser) -> None:
     identity = parser.add_mutually_exclusive_group()
-    identity.add_argument("--reddit-user", help=f"Reddit username. Defaults to {DEFAULT_REDDIT_USER}.")
-    identity.add_argument("--profile-name", help=f"Chrome profile name. Default profile is {DEFAULT_PROFILE_NAME}.")
+    identity.add_argument(
+        "--reddit-user",
+        help=(
+            "Reddit username. When omitted, resolves from a single "
+            f"chrome_profile_accounts row or {DEFAULT_USER_ENV}."
+        ),
+    )
+    identity.add_argument(
+        "--profile-name",
+        help=f"Chrome profile name. Default profile name is {DEFAULT_PROFILE_NAME}.",
+    )
     identity.add_argument("--account-label", help="Execution account label.")
 
 
