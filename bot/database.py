@@ -17,6 +17,11 @@ class BotDatabase:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA busy_timeout = 30000")
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # WAL lets readers proceed while a writer holds the DB; needed for multi-agent
+        # / UI / worker concurrency. synchronous=NORMAL is the usual pairing with WAL:
+        # durable across app crashes; a power-loss window is acceptable for this DB.
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         self._create_tables()
 
     def _create_tables(self) -> None:

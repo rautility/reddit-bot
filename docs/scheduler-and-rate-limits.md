@@ -3,6 +3,11 @@
 The project uses SQLite as the shared coordination point for agents, schedules,
 workers, account quotas, and Chrome profile leases.
 
+Connections open with `PRAGMA journal_mode=WAL` (and `synchronous=NORMAL`) so
+readers are less blocked by writers under multi-agent / UI / worker load.
+Backup `reddit_bot.db` with the SQLite backup API, or stop writers first; do not
+copy the main file alone while the process is running (WAL sidecar files matter).
+
 ## Tables
 
 `agent_queue`

@@ -24,6 +24,15 @@ class TestBotDatabase:
         assert "Z" not in now
         assert "2026-01-01T00:00:00" < now
 
+    def test_journal_mode_is_wal(self, tmp_path):
+        db_path = str(tmp_path / "wal.db")
+        database = BotDatabase(db_path)
+        try:
+            mode = database.conn.execute("PRAGMA journal_mode").fetchone()[0]
+            assert str(mode).lower() == "wal"
+        finally:
+            database.close()
+
     def test_log_action(self, db):
         db.log_action("user1", "upvote", "https://reddit.com/r/test/comments/abc")
         assert db.was_action_performed("user1", "upvote", "https://reddit.com/r/test/comments/abc")
