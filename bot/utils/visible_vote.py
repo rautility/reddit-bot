@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import random
 import time
 from pathlib import Path
 from typing import Any, Literal
+
+from bot.utils.mouse import _bezier_curve_points, _cdp_mouse_path_click, _clamp_point_to_viewport, _driver_supports_cdp
 
 VoteIntent = Literal["upvote", "downvote"]
 
@@ -208,40 +211,104 @@ def find_visible_vote_control(driver: Any, intent: VoteIntent, url: str = "") ->
     return driver.execute_script(FIND_VISIBLE_VOTE_CONTROL_SCRIPT, intent, url)
 
 
-def _dispatch_cdp_click(driver: Any, x: int, y: int) -> None:
-    """Click viewport coordinates through Chrome DevTools, falling back to JS events."""
-    if hasattr(driver, "execute_cdp_cmd"):
-        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
-        driver.execute_cdp_cmd(
-            "Input.dispatchMouseEvent",
-            {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1},
-        )
-        driver.execute_cdp_cmd(
-            "Input.dispatchMouseEvent",
-            {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1},
-        )
-        return
+def _dispatch_cdp_click(driver: Any, x: int, y: int) -> tuple[int, int]:
+    """Move in a human-like curved path and click a viewport point."""
+    viewport = driver.execute_script("return [window.innerWidth, window.innerHeight];")
+    viewport_w = int(viewport[0]) if isinstance(viewport, (list, tuple)) and viewport[0] else 1
+    viewport_h = int(viewport[1]) if isinstance(viewport, (list, tuple)) and len(viewport) > 1 and viewport[1] else 1
 
+    start = (viewport_w // 2, viewport_h // 2)
+    end = _clamp_point_to_viewport(
+        (x + random.randint(-6, 6), y + random.randint(-6, 6)),
+        viewport_w,
+        viewport_h,
+    )
+    points = [
+        _clamp_point_to_viewport(point, viewport_w, viewport_h)
+        for point in _bezier_curve_points(start, end, num_points=random.randint(16, 32))
+    ]
+
+    if _driver_supports_cdp(driver):
+        _cdp_mouse_path_click(driver, points)
+        return end
+
+    for index, (point_x, point_y) in enumerate(points):
+        driver.execute_script(
+            """
+            const pointX = arguments[0];
+            const pointY = arguments[1];
+            const target = document.elementFromPoint(pointX, pointY) ||
+              document.body ||
+              document.documentElement;
+            if (!target || !target.dispatchEvent) return false;
+            target.dispatchEvent(new MouseEvent('mousemove', {
+                bubbles: true,
+                cancelable: true,
+                clientX: pointX,
+                clientY: pointY,
+                button: 0,
+                buttons: 0
+            }));
+            return true;
+            """,
+            point_x,
+            point_y,
+        )
+        if index + 1 < len(points):
+            time.sleep(random.uniform(0.005, 0.03))
+
+    time.sleep(random.uniform(0.03, 0.11))
     driver.execute_script(
         """
         const x = arguments[0];
         const y = arguments[1];
-        const target = document.elementFromPoint(x, y);
-        if (!target) return false;
-        for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-          target.dispatchEvent(new MouseEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            clientX: x,
-            clientY: y,
-            button: 0
-          }));
-        }
+        const target = document.elementFromPoint(x, y) || document.body || document.documentElement;
+        if (!target || !target.dispatchEvent) return false;
+        target.dispatchEvent(new MouseEvent('pointerdown', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: 1
+        }));
+        target.dispatchEvent(new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: 1
+        }));
+        target.dispatchEvent(new MouseEvent('pointerup', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: 0
+        }));
+        target.dispatchEvent(new MouseEvent('mouseup', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: 0
+        }));
+        target.dispatchEvent(new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button: 0
+        }));
         return true;
         """,
-        x,
-        y,
+        end[0],
+        end[1],
     )
+    return end
 
 
 def click_visible_vote_control(
@@ -274,7 +341,7 @@ def click_visible_vote_control(
     click = candidate.get("click") or {}
     x = int(click["x"])
     y = int(click["y"])
-    _dispatch_cdp_click(driver, x, y)
+    click_x, click_y = _dispatch_cdp_click(driver, x, y)
     if settle_seconds > 0:
         time.sleep(settle_seconds)
 
@@ -291,7 +358,7 @@ def click_visible_vote_control(
         "clicked": True,
         "intent": intent,
         "url": driver.current_url,
-        "click": {"x": x, "y": y},
+        "click": {"x": click_x, "y": click_y},
         "source": candidate.get("source"),
         "before": before,
         "after": after,

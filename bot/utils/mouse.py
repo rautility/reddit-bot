@@ -19,14 +19,39 @@ def _bezier_curve_points(
     end: tuple[int, int],
     num_points: int = 20,
 ) -> list[tuple[int, int]]:
-    """Generate points along a Bezier curve between start and end."""
-    try:
-        import bezier
-        import numpy as np
-    except ImportError as exc:
-        raise RuntimeError('Human mouse movement requires the optional "mouse" extra: pip install -e ".[mouse]".') from exc
+    """Generate points along a non-linear path between start and end."""
+    if num_points <= 1:
+        return [tuple(start), tuple(end)]
 
-    # Add random control points for natural movement.
+    if HAS_BEZIER:
+        try:
+            import bezier
+            import numpy as np
+        except ImportError:
+            pass
+        else:
+            # Add random control points for natural movement.
+            ctrl1 = (
+                start[0] + random.randint(-50, 50) + (end[0] - start[0]) // 3,
+                start[1] + random.randint(-50, 50) + (end[1] - start[1]) // 3,
+            )
+            ctrl2 = (
+                start[0] + random.randint(-50, 50) + 2 * (end[0] - start[0]) // 3,
+                start[1] + random.randint(-50, 50) + 2 * (end[1] - start[1]) // 3,
+            )
+
+            nodes = np.asfortranarray(
+                [
+                    [start[0], ctrl1[0], ctrl2[0], end[0]],
+                    [start[1], ctrl1[1], ctrl2[1], end[1]],
+                ],
+                dtype=float,
+            )
+            curve = bezier.Curve(nodes, degree=3)
+            t_values = np.linspace(0.0, 1.0, num_points)
+            points = curve.evaluate_multi(t_values)
+            return [(int(points[0, i]), int(points[1, i])) for i in range(num_points)]
+
     ctrl1 = (
         start[0] + random.randint(-50, 50) + (end[0] - start[0]) // 3,
         start[1] + random.randint(-50, 50) + (end[1] - start[1]) // 3,
@@ -36,18 +61,87 @@ def _bezier_curve_points(
         start[1] + random.randint(-50, 50) + 2 * (end[1] - start[1]) // 3,
     )
 
-    nodes = np.asfortranarray(
-        [
-            [start[0], ctrl1[0], ctrl2[0], end[0]],
-            [start[1], ctrl1[1], ctrl2[1], end[1]],
-        ],
-        dtype=float,
-    )
-    curve = bezier.Curve(nodes, degree=3)
+    points: list[tuple[int, int]] = []
+    for step in range(num_points):
+        t = step / (num_points - 1)
+        inverse_t = 1.0 - t
+        x = (
+            (inverse_t**3) * start[0]
+            + 3 * (inverse_t**2) * t * ctrl1[0]
+            + 3 * inverse_t * (t**2) * ctrl2[0]
+            + (t**3) * end[0]
+        )
+        y = (
+            (inverse_t**3) * start[1]
+            + 3 * (inverse_t**2) * t * ctrl1[1]
+            + 3 * inverse_t * (t**2) * ctrl2[1]
+            + (t**3) * end[1]
+        )
+        points.append((int(x), int(y)))
 
-    t_values = np.linspace(0.0, 1.0, num_points)
-    points = curve.evaluate_multi(t_values)
-    return [(int(points[0, i]), int(points[1, i])) for i in range(num_points)]
+    return points
+
+
+def _cdp_mouse_event(
+    driver: WebDriver,
+    event_type: str,
+    x: int,
+    y: int,
+    *,
+    button: str = "left",
+    buttons: int = 0,
+    click_count: int = 1,
+) -> None:
+    driver.execute_cdp_cmd(
+        "Input.dispatchMouseEvent",
+        {
+            "type": event_type,
+            "x": x,
+            "y": y,
+            "button": button,
+            "buttons": buttons,
+            "clickCount": click_count,
+        },
+    )
+
+
+def _cdp_mouse_path_click(
+    driver: WebDriver,
+    points: list[tuple[int, int]],
+    *,
+    move_pause_min: float = 0.005,
+    move_pause_max: float = 0.03,
+    press_pause_min: float = 0.03,
+    press_pause_max: float = 0.12,
+    release_pause_min: float = 0.01,
+    release_pause_max: float = 0.05,
+) -> None:
+    """Move with CDP mouse events then click with human-like timing."""
+    if not points:
+        return
+
+    for index, (x, y) in enumerate(points):
+        _cdp_mouse_event(
+            driver,
+            "mouseMoved",
+            x,
+            y,
+            button="none",
+            buttons=0,
+            click_count=0,
+        )
+        if index + 1 < len(points):
+            time.sleep(random.uniform(move_pause_min, move_pause_max))
+
+    x, y = points[-1]
+    time.sleep(random.uniform(press_pause_min, press_pause_max))
+    _cdp_mouse_event(driver, "mousePressed", x, y, button="left", buttons=1, click_count=1)
+    time.sleep(random.uniform(release_pause_min, release_pause_max))
+    _cdp_mouse_event(driver, "mouseReleased", x, y, button="left", buttons=0, click_count=1)
+
+
+def _driver_supports_cdp(driver: WebDriver) -> bool:
+    return callable(getattr(type(driver), "execute_cdp_cmd", None))
 
 
 def click_target_diagnostics(
@@ -289,11 +383,57 @@ def _dom_mouse_path_click(
     element: WebElement,
     points: list[tuple[int, int]],
 ) -> None:
-    driver.execute_script(
-        """
+    if not points:
+        return
+
+    move_pause_min = 0.005
+    move_pause_max = 0.03
+    press_pause_min = 0.03
+    press_pause_max = 0.12
+    release_pause_min = 0.01
+    release_pause_max = 0.05
+
+    move_script = """
         const element = arguments[0];
-        const points = arguments[1] || [];
-        const dispatch = (target, type, point) => {
+        const point = arguments[1];
+        const eventInit = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: point.x,
+            clientY: point.y,
+            screenX: point.x,
+            screenY: point.y,
+            button: 0,
+            buttons: 0,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true
+        };
+        const eventCtor = window.PointerEvent ? window.PointerEvent : window.MouseEvent;
+        const target = document.elementFromPoint(point.x, point.y) || element;
+        if (!target || !target.dispatchEvent) {
+            return false;
+        }
+        target.dispatchEvent(new eventCtor('pointermove', eventInit));
+        target.dispatchEvent(new MouseEvent('mousemove', {
+            bubbles: true,
+            cancelable: true,
+            clientX: point.x,
+            clientY: point.y
+        }));
+        return true;
+        """
+    for index, point in enumerate(points):
+        driver.execute_script(move_script, element, {"x": point[0], "y": point[1]})
+        if index + 1 < len(points):
+            time.sleep(random.uniform(move_pause_min, move_pause_max))
+
+    end = points[-1]
+    end_script = """
+        const element = arguments[0];
+        const point = arguments[1];
+        const dispatch = (type, point, button, buttons) => {
             const eventInit = {
                 bubbles: true,
                 cancelable: true,
@@ -302,8 +442,8 @@ def _dom_mouse_path_click(
                 clientY: point.y,
                 screenX: point.x,
                 screenY: point.y,
-                button: 0,
-                buttons: type === 'mouseup' || type === 'click' ? 0 : 1,
+                button: button,
+                buttons: buttons,
                 pointerId: 1,
                 pointerType: 'mouse',
                 isPrimary: true
@@ -311,31 +451,25 @@ def _dom_mouse_path_click(
             const eventCtor = type.startsWith('pointer') && window.PointerEvent
                 ? window.PointerEvent
                 : window.MouseEvent;
-            target.dispatchEvent(new eventCtor(type, eventInit));
-        };
-        const fallbackRect = element.getBoundingClientRect();
-        const fallbackPoint = {
-            x: Math.round(fallbackRect.left + fallbackRect.width / 2),
-            y: Math.round(fallbackRect.top + fallbackRect.height / 2)
-        };
-        const path = points.length ? points.map(([x, y]) => ({x, y})) : [fallbackPoint];
-        for (const point of path) {
             const target = document.elementFromPoint(point.x, point.y) || element;
-            dispatch(target, 'pointermove', point);
-            dispatch(target, 'mousemove', point);
-        }
-        const end = path[path.length - 1] || fallbackPoint;
-        dispatch(element, 'pointerover', end);
-        dispatch(element, 'mouseover', end);
-        dispatch(element, 'pointerdown', end);
-        dispatch(element, 'mousedown', end);
-        dispatch(element, 'pointerup', end);
-        dispatch(element, 'mouseup', end);
-        dispatch(element, 'click', end);
-        """,
-        element,
-        points,
-    )
+            if (!target || !target.dispatchEvent) {
+                return false;
+            }
+            target.dispatchEvent(new eventCtor(type, eventInit));
+            return true;
+        };
+        dispatch('pointerover', point, 0, 0);
+        dispatch('mouseover', point, 0, 0);
+        dispatch('pointerdown', point, 0, 1);
+        dispatch('mousedown', point, 0, 1);
+        dispatch('pointerup', point, 0, 0);
+        dispatch('mouseup', point, 0, 0);
+        dispatch('click', point, 0, 0);
+        return true;
+        """
+    time.sleep(random.uniform(press_pause_min, press_pause_max))
+    driver.execute_script(end_script, element, {"x": end[0], "y": end[1]})
+    time.sleep(random.uniform(release_pause_min, release_pause_max))
 
 
 def human_scroll_to_element(
@@ -412,17 +546,22 @@ def _pointer_click(driver: WebDriver, element: WebElement, pause_seconds: float)
     ActionChains(driver).move_to_element(element).pause(pause_seconds).click().perform()
 
 
+def _pointer_click_current_position(driver: WebDriver, pause_seconds: float) -> None:
+    from selenium.webdriver.common.action_chains import ActionChains
+
+    ActionChains(driver).pause(pause_seconds).click().perform()
+
+
 def human_click(driver: WebDriver, element: WebElement, enabled: bool = True) -> dict:
     """Click an element through WebDriver pointer actions and return hit-test diagnostics."""
     if enabled:
         human_reading_scroll(driver)
         human_scroll_to_element(driver, element)
     diagnostics = click_target_diagnostics(driver, element, scroll=not enabled)
-    if not enabled or not HAS_BEZIER:
+    if not enabled:
         _pointer_click(driver, element, 0.05)
         return diagnostics
 
-    # Keep the optional legacy cursor movement, then use a real pointer click at the element.
     from selenium.webdriver.common.action_chains import ActionChains
 
     viewport_w = driver.execute_script("return window.innerWidth;")
@@ -433,6 +572,10 @@ def human_click(driver: WebDriver, element: WebElement, enabled: bool = True) ->
         _clamp_point_to_viewport(point, viewport_w, viewport_h)
         for point in _bezier_curve_points(start, end, num_points=random.randint(15, 30))
     ]
+
+    if _driver_supports_cdp(driver):
+        _cdp_mouse_path_click(driver, points)
+        return diagnostics
 
     if _uses_attached_chrome_debugger(driver):
         _dom_mouse_path_click(driver, element, points)
@@ -446,5 +589,5 @@ def human_click(driver: WebDriver, element: WebElement, enabled: bool = True) ->
 
     actions.perform()
     time.sleep(random.uniform(0.05, 0.2))
-    _pointer_click(driver, element, random.uniform(0.03, 0.12))
+    _pointer_click_current_position(driver, random.uniform(0.03, 0.12))
     return diagnostics

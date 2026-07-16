@@ -1,6 +1,6 @@
 ---
 name: reddit-bot
-description: Take real Reddit actions through the local reddit-bot (upvote, downvote, comment, save/hide, join/leave, follow/unfollow, DM, post, crosspost, human search) using Raul's saved Chrome profiles. Use whenever a task needs to act on a Reddit URL, queue or schedule Reddit actions, or check the bot's queue/quota/errors. Run `reddit-tool capabilities` to learn the exact action fields, then `reddit-tool do` to execute. Local only — same laptop, no network, no programmatic login.
+description: Take real Reddit actions through the local reddit-bot (upvote, downvote, comment, save/hide, join/leave, follow/unfollow, DM, post, crosspost, human search/scroll, search_only) using Raul's saved Chrome profiles. Use whenever a task needs to act on a Reddit URL, queue or schedule Reddit actions, or check the bot's queue/quota/errors. Run `reddit-tool capabilities` to learn the exact action fields, then `reddit-tool do` to execute. Local only — same laptop, no network, no programmatic login.
 ---
 
 # Reddit Bot

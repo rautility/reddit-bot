@@ -48,7 +48,7 @@ class BotConfig:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     rotate_user_agent: bool = False
     randomize_actions: bool = False
-    human_mouse: bool = False
+    human_mouse: bool = True
     manual_login: bool = True
     use_existing_chrome: bool = False
     chrome_user_data_dir: str | None = None
@@ -229,6 +229,7 @@ class BotConfig:
             "REDDIT_BOT_LOG_FILE": "log_file",
             "REDDIT_BOT_WEBHOOK_URL": "webhook.url",
             "REDDIT_BOT_MANUAL_LOGIN": "manual_login",
+            "REDDIT_BOT_HUMAN_MOUSE": "human_mouse",
             "REDDIT_BOT_USE_EXISTING_CHROME": "use_existing_chrome",
             "REDDIT_BOT_CHROME_USER_DATA_DIR": "chrome_user_data_dir",
             "REDDIT_BOT_CHROME_PROFILE_NAME": "chrome_profile_name",

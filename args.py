@@ -74,7 +74,14 @@ def cmdline_args() -> dict:
         "--human-mouse",
         dest="human_mouse",
         action="store_true",
-        help="Use human-like Bezier curve mouse movements.",
+        default=None,
+        help="Use human-like non-linear mouse movements. Enabled by default; pass --no-human-mouse to disable.",
+    )
+    parser.add_argument(
+        "--no-human-mouse",
+        dest="human_mouse",
+        action="store_false",
+        help="Disable human-like mouse movements.",
     )
     parser.add_argument(
         "--manual-login",

@@ -54,10 +54,13 @@ def test_dom_mouse_path_click_dispatches_script(mocker):
 
     _dom_mouse_path_click(driver, element, [(10, 20), (30, 40)])
 
-    driver.execute_script.assert_called_once()
-    assert "pointermove" in driver.execute_script.call_args.args[0]
+    assert driver.execute_script.call_count >= 3
+    assert "pointermove" in driver.execute_script.call_args_list[0].args[0]
+    assert "buttons: 0" in driver.execute_script.call_args_list[0].args[0]
+    assert "pointerdown" in driver.execute_script.call_args_list[-1].args[0]
+    assert "dispatch('pointerover', point, 0, 0)" in driver.execute_script.call_args_list[-1].args[0]
+    assert "dispatch('pointerdown', point, 0, 1)" in driver.execute_script.call_args_list[-1].args[0]
     assert driver.execute_script.call_args.args[1] is element
-    assert driver.execute_script.call_args.args[2] == [(10, 20), (30, 40)]
 
 
 def test_click_target_diagnostics_can_skip_scroll(mocker):
@@ -107,6 +110,7 @@ def test_human_reading_scroll_skips_short_pages(mocker):
 
 def test_human_click_scrolls_before_diagnostics_in_human_mode(mocker):
     driver = mocker.Mock()
+    driver.execute_script.side_effect = [1280, 720, {"x": 420, "y": 360}]
     element = mocker.Mock()
     reading_scroll = mocker.patch("bot.utils.mouse.human_reading_scroll")
     scroll = mocker.patch("bot.utils.mouse.human_scroll_to_element")
@@ -114,7 +118,10 @@ def test_human_click_scrolls_before_diagnostics_in_human_mode(mocker):
         "bot.utils.mouse.click_target_diagnostics",
         return_value={"ok": True},
     )
-    pointer_click = mocker.patch("bot.utils.mouse._pointer_click")
+    pointer_click_current = mocker.patch("bot.utils.mouse._pointer_click_current_position")
+    mocker.patch("bot.utils.mouse._driver_supports_cdp", return_value=False)
+    mocker.patch("bot.utils.mouse._uses_attached_chrome_debugger", return_value=False)
+    mocker.patch("bot.utils.mouse._bezier_curve_points", return_value=[(640, 360), (420, 360)])
     mocker.patch("bot.utils.mouse.HAS_BEZIER", False)
 
     result = human_click(driver, element, enabled=True)
@@ -123,7 +130,7 @@ def test_human_click_scrolls_before_diagnostics_in_human_mode(mocker):
     reading_scroll.assert_called_once_with(driver)
     scroll.assert_called_once_with(driver, element)
     diagnostics.assert_called_once_with(driver, element, scroll=False)
-    pointer_click.assert_called_once_with(driver, element, 0.05)
+    pointer_click_current.assert_called_once()
 
 
 def test_human_click_uses_dom_path_for_attached_debugger(mocker):

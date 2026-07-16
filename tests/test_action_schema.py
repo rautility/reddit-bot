@@ -13,7 +13,11 @@ def test_validate_reports_missing_required_fields():
     assert action_schema.validate_action_fields("upvote", {}) == [
         {
             "field": "link",
-            "error": "'upvote' requires 'link': Target Reddit URL. For post actions, a canonical /comments/ post URL.",
+            "error": (
+                "'upvote' requires 'link': Target Reddit URL, or search query "
+                "text for query-based actions. For post actions, use a "
+                "canonical /comments/ post URL."
+            ),
         }
     ]
 

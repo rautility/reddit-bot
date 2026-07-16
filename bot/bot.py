@@ -595,23 +595,27 @@ class RedditBot:
         return path
 
     def _popup_handler(self) -> None:
+        from bot.utils.mouse import human_click
+
         with contextlib.suppress(NoSuchElementException):
             btn = self.dv.find_element(By.CSS_SELECTOR, "button[aria-label='Close']")
-            btn.click()
+            human_click(self.dv, btn, enabled=self.config.human_mouse)
         with contextlib.suppress(NoSuchElementException):
             btn = self.dv.find_element(
                 By.XPATH,
                 "/html/body/div[1]/div/div[2]/div[1]/header/div/div[2]/div[2]/div/div[1]/span[2]/div/div[2]/button",
             )
-            btn.click()
+            human_click(self.dv, btn, enabled=self.config.human_mouse)
 
     def _cookies_handler(self) -> None:
+        from bot.utils.mouse import human_click
+
         with contextlib.suppress(NoSuchElementException):
             btn = self.dv.find_element(By.CSS_SELECTOR, "button[name='accept']")
-            btn.click()
+            human_click(self.dv, btn, enabled=self.config.human_mouse)
         with contextlib.suppress(NoSuchElementException):
             btn = self.dv.find_element(By.XPATH, "/html/body/div[1]/div/div/div/div[3]/div/form/div/button")
-            btn.click()
+            human_click(self.dv, btn, enabled=self.config.human_mouse)
 
     def reinit_driver(self) -> None:
         """Reinitialize the webdriver (e.g., for proxy rotation per account)."""

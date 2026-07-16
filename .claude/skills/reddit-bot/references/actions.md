@@ -26,7 +26,9 @@ of the action file; `do` accepts each as a `--flag`.
 | post_link | title, subreddit, body (URL) | flair | (ignored) |
 | post_image | title, subreddit, body (image path) | flair | (ignored) |
 | crosspost | link, subreddit (dest) | title | source post URL |
-| human_search | link (= query text) | subreddit | search query |
+| human_search | link (= query text) | subreddit | search query (opens one post) |
+| search_only | link (= query text) | subreddit | search query (candidates only; no open) |
+| human_scroll | link | — | any reddit.com URL |
 | search_upvote | link (= query text) | subreddit | search query |
 
 ## Field glossary
@@ -54,6 +56,8 @@ $TOOL do --action post_text --subreddit "test" --title "Hello" --body "Body text
 $TOOL do --action post_link --subreddit "test" --title "Cool" --body "https://example.com"
 $TOOL do --action crosspost --link "<source_post_url>" --subreddit "test"
 $TOOL do --action human_search --query "best excel formulas"
+$TOOL do --action search_only --query "best excel formulas"
+$TOOL do --action human_scroll --link "https://www.reddit.com/r/excel/"
 $TOOL search-upvote --query "best excel formulas"
 $TOOL schedule add --action search_upvote --query "best excel formulas" --at 2026-07-06T09:00:00
 $TOOL external-search-upvote --query "best excel formulas" --json

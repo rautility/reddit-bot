@@ -30,7 +30,7 @@ class HumanSearchAction(BaseAction):
         subreddit: str = "",
         **kwargs: Any,
     ) -> ActionResult:
-        search_query = (query or link or kwargs.get("body") or kwargs.get("title") or "").strip()
+        search_query = self._search_query(link=link, query=query, **kwargs)
         if not search_query:
             return ActionResult(
                 success=False,
@@ -47,19 +47,13 @@ class HumanSearchAction(BaseAction):
                 message="Dry run",
             )
 
-        max_candidates = max(1, int(getattr(self.config, "search_upvote_max_candidates", 5)))
-        try:
-            candidates = self.collect_candidates(
-                search_query,
-                subreddit=subreddit,
-                limit=max_candidates,
-            )
-        except WebDriverException as exc:
+        candidates, error = self._candidate_result(search_query, subreddit=subreddit)
+        if error:
             return ActionResult(
                 success=False,
                 action=self.name,
                 link=search_query,
-                message=f"Search failed: {str(exc).splitlines()[0]}",
+                message=error,
             )
 
         if not candidates:
@@ -81,6 +75,9 @@ class HumanSearchAction(BaseAction):
                     action=self.name,
                     link=opened_url,
                     message=(f"Opened {source} search result {index}/{total}: {candidate.get('title') or opened_url}"),
+                    details=self._candidate_details(
+                        search_query, subreddit, candidates, selected_url=opened_url
+                    ),
                 )
             if index < total:
                 Timeouts.med()
@@ -90,7 +87,53 @@ class HumanSearchAction(BaseAction):
             action=self.name,
             link=(candidates[0].get("url") or search_query),
             message="No eligible search result could be opened",
+            details=self._candidate_details(search_query, subreddit, candidates, selected_url=None),
         )
+
+    @staticmethod
+    def _search_query(link: str = "", query: str = "", **kwargs: Any) -> str:
+        return (query or link or kwargs.get("body") or kwargs.get("title") or "").strip()
+
+    def _candidate_result(
+        self, search_query: str, *, subreddit: str = ""
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        max_candidates = max(1, int(getattr(self.config, "search_upvote_max_candidates", 5)))
+        try:
+            return (
+                self.collect_candidates(
+                    search_query,
+                    subreddit=subreddit,
+                    limit=max_candidates,
+                ),
+                None,
+            )
+        except WebDriverException as exc:
+            return [], f"Search failed: {str(exc).splitlines()[0]}"
+
+    @staticmethod
+    def _candidate_details(
+        query: str,
+        subreddit: str,
+        candidates: list[dict[str, Any]],
+        *,
+        selected_url: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "query": query,
+            "subreddit": subreddit or None,
+            "candidateCount": len(candidates),
+            "selectedUrl": selected_url,
+            "candidates": [
+                {
+                    "index": index,
+                    "url": candidate.get("url"),
+                    "title": candidate.get("title"),
+                    "source": candidate.get("source"),
+                    "ageDays": candidate.get("age_days"),
+                }
+                for index, candidate in enumerate(candidates, start=1)
+            ],
+        }
 
     def _open_ranked_candidate(self, candidate: dict[str, Any]) -> str | None:
         """Open a candidate post — click its on-page link if present (human-like),
@@ -686,6 +729,63 @@ class HumanSearchAction(BaseAction):
     def _looks_like_url(value: str) -> bool:
         parsed = urlparse(value)
         return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+class SearchOnlyAction(HumanSearchAction):
+    """Search Reddit, skim results, and report eligible organic posts without opening one."""
+
+    name = "search_only"
+
+    def execute(
+        self,
+        link: str = "",
+        query: str = "",
+        subreddit: str = "",
+        **kwargs: Any,
+    ) -> ActionResult:
+        search_query = self._search_query(link=link, query=query, **kwargs)
+        if not search_query:
+            return ActionResult(
+                success=False,
+                action=self.name,
+                link=link,
+                message="Search query is required",
+            )
+
+        if self.config.dry_run:
+            return ActionResult(
+                success=True,
+                action=self.name,
+                link=search_query,
+                message="Dry run: would search Reddit and collect organic post candidates",
+            )
+
+        candidates, error = self._candidate_result(search_query, subreddit=subreddit)
+        if error:
+            return ActionResult(
+                success=False,
+                action=self.name,
+                link=search_query,
+                message=error,
+            )
+        if not candidates:
+            return ActionResult(
+                success=False,
+                action=self.name,
+                link=search_query,
+                message="No eligible non-promoted, non-archived Reddit post found",
+                details=self._candidate_details(
+                    search_query, subreddit, candidates, selected_url=None
+                ),
+            )
+
+        return ActionResult(
+            success=True,
+            action=self.name,
+            link=search_query,
+            message=f"Found {len(candidates)} eligible organic Reddit post candidate(s); no post opened",
+            details=self._candidate_details(search_query, subreddit, candidates, selected_url=None),
+        )
 
 
 class SearchUpvoteAction(BaseAction):

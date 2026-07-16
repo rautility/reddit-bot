@@ -6,6 +6,8 @@ import csv
 import json
 from dataclasses import dataclass
 
+from bot.action_schema import action_names
+
 
 @dataclass
 class ActionEntry:
@@ -22,26 +24,8 @@ class ActionEntry:
     message: str | None = None
 
 
-VALID_ACTIONS = {
-    "upvote",
-    "downvote",
-    "comment",
-    "join",
-    "leave",
-    "save",
-    "hide",
-    "award",
-    "post_text",
-    "post_link",
-    "post_image",
-    "crosspost",
-    "dm",
-    "follow",
-    "unfollow",
-    "update_bio",
-    "human_search",
-    "search_upvote",
-}
+# Keep award as a legacy links-file alias even if not in ACTION_SCHEMA yet.
+VALID_ACTIONS = set(action_names()) | {"award"}
 
 
 def parse_links_file(path: str) -> list[ActionEntry]:

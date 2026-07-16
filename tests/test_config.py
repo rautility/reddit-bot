@@ -19,6 +19,7 @@ class TestBotConfigDefaults:
         assert config.selector_cache_path == ".selector-healing/reddit_selectors.json"
         assert config.selector_fallback_wait == 1.0
         assert config.selenium_implicit_wait == 20
+        assert config.human_mouse is True
         assert config.chrome_extension_healer_enabled is False
         assert config.chrome_extension_path == "chrome_extension/reddit_healer"
         assert config.chrome_extension_bridge_timeout_ms == 1500
@@ -95,6 +96,7 @@ class TestBotConfigMerge:
         monkeypatch.setenv("REDDIT_BOT_CHROME_EXTENSION_HEALER_ENABLED", "true")
         monkeypatch.setenv("REDDIT_BOT_CHROME_EXTENSION_BRIDGE_TIMEOUT_MS", "2500")
         monkeypatch.setenv("REDDIT_BOT_CHROME_EXTENSION_MIN_CONFIDENCE", "0.9")
+        monkeypatch.setenv("REDDIT_BOT_HUMAN_MOUSE", "false")
         config = BotConfig()
         config.merge_env_vars()
         assert config.headless is True
@@ -106,3 +108,4 @@ class TestBotConfigMerge:
         assert config.chrome_extension_healer_enabled is True
         assert config.chrome_extension_bridge_timeout_ms == 2500
         assert config.chrome_extension_min_confidence == 0.9
+        assert config.human_mouse is False

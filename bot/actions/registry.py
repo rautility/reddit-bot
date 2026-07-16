@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .base import ActionResult, BaseAction
+from .browse import HumanScrollAction
 from .comment import CommentAction
 from .community import JoinCommunityAction
 from .dm import DirectMessageAction
@@ -12,7 +13,7 @@ from .follow import FollowAction, UnfollowAction
 from .post import CrosspostAction, PostImageAction, PostLinkAction, PostTextAction
 from .profile import UpdateBioAction
 from .save_hide import HideAction, SaveAction
-from .search import HumanSearchAction, SearchUpvoteAction
+from .search import HumanSearchAction, SearchOnlyAction, SearchUpvoteAction
 from .vote import VoteAction
 
 if TYPE_CHECKING:
@@ -40,7 +41,9 @@ class ActionRegistry:
         "follow": FollowAction,
         "unfollow": UnfollowAction,
         "update_bio": UpdateBioAction,
+        "human_scroll": HumanScrollAction,
         "human_search": HumanSearchAction,
+        "search_only": SearchOnlyAction,
         "search_upvote": SearchUpvoteAction,
     }
 

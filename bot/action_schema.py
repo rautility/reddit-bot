@@ -35,7 +35,10 @@ URL_CONTRACT = {
 # What each transport field means, so an agent never has to read prose to build
 # a valid payload.
 FIELD_GLOSSARY = {
-    "link": "Target Reddit URL. For post actions, a canonical /comments/ post URL.",
+    "link": (
+        "Target Reddit URL, or search query text for query-based actions. "
+        "For post actions, use a canonical /comments/ post URL."
+    ),
     "comment": "Comment body text (used by the `comment` action).",
     "title": "Post title, or the subject line for a `dm`.",
     "subreddit": "Destination community name or URL for post/crosspost actions.",
@@ -146,11 +149,40 @@ ACTION_SCHEMA: dict[str, dict[str, Any]] = {
         "notes": "link is the source post; subreddit is the destination community.",
     },
     "human_search": {
-        "summary": "Run a human-like Reddit search.",
+        "summary": "Run a human-like Reddit search, open one eligible organic post result, and stop.",
         "required": ["link"],
         "optional": ["subreddit"],
         "link_kind": "query",
-        "notes": "For queued runs, put the search query text in the link field.",
+        "notes": (
+            "For queued or scheduled runs, put the search query text in the link "
+            "field. This is non-mutating, but it does open a selected post."
+        ),
+    },
+    "search_only": {
+        "summary": (
+            "Run a human-like Reddit search and report eligible organic post "
+            "candidates without opening a post."
+        ),
+        "required": ["link"],
+        "optional": ["subreddit"],
+        "link_kind": "query",
+        "notes": (
+            "For queued or scheduled runs, put the search query text in the link "
+            "field. This action skims search results and records candidates only."
+        ),
+    },
+    "human_scroll": {
+        "summary": (
+            "Open a Reddit post, profile, community, search, or listing URL and "
+            "perform a human-like reading scroll."
+        ),
+        "required": ["link"],
+        "optional": [],
+        "link_kind": "reddit_url",
+        "notes": (
+            "Non-mutating browsing action. The link can be any reddit.com URL, "
+            "not only a canonical post URL."
+        ),
     },
     "search_upvote": {
         "summary": "Search Reddit and upvote the selected organic post.",

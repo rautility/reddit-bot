@@ -3,7 +3,7 @@
 from selenium.common.exceptions import WebDriverException
 
 from bot.actions.base import ActionResult
-from bot.actions.search import HumanSearchAction, SearchUpvoteAction
+from bot.actions.search import HumanSearchAction, SearchOnlyAction, SearchUpvoteAction
 from bot.config import BotConfig
 
 
@@ -133,6 +133,27 @@ def test_human_search_returns_failure_when_no_candidates(mocker):
 
     assert result.success is False
     assert "No eligible" in result.message
+
+
+def test_search_only_collects_without_opening_candidate(mocker):
+    driver = mocker.Mock()
+    action = SearchOnlyAction(driver, BotConfig())
+    top = "https://www.reddit.com/r/x/comments/a/one/"
+    mocker.patch.object(
+        action,
+        "collect_candidates",
+        return_value=[{"url": top, "title": "one", "source": "extension"}],
+    )
+    open_mock = mocker.patch.object(action, "_open_ranked_candidate")
+
+    result = action.execute(query="excel forms", subreddit="excel")
+
+    assert result.success is True
+    assert result.action == "search_only"
+    assert result.link == "excel forms"
+    assert result.details["candidateCount"] == 1
+    assert result.details["selectedUrl"] is None
+    open_mock.assert_not_called()
 
 
 def test_open_ranked_candidate_clicks_element_when_present(mocker):
