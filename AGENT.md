@@ -56,6 +56,12 @@ If sandboxed access to `127.0.0.1:<port>` fails, retry the same probe with escal
 
 ## Helper Commands
 
+Read-only “why can’t I act?” diagnostics (DB, Chrome debugger, queue, executor):
+
+```bash
+.venv/bin/python scripts/reddit_tool.py doctor --json
+```
+
 Open the default saved profile:
 
 ```bash

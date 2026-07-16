@@ -67,6 +67,7 @@ returns the selected post URL plus final mutation status when available.
 ## 3. Check state, results, and failures
 
 ```bash
+$TOOL doctor --json          # read-only: why can't I act? (DB, Chrome, queue, executor)
 $TOOL overview               # queue, schedules, executor, profiles, recent errors
 $TOOL job --id <N>           # one job's status + stored result (from `do`/`queue`)
 $TOOL queue --status failed  # queued/failed jobs
@@ -75,6 +76,10 @@ $TOOL queue retry --id 123   # requeue one failed job
 $TOOL queue retry --all      # requeue failed jobs
 $TOOL errors                 # recent queue, schedule, action, and executor errors
 ```
+
+`doctor` is pure diagnostics (no Reddit mutations, no queue submit). Soft
+failures (Chrome not running) set `summary.ok: false` but process exit stays 0
+so you can parse the envelope; only hard misconfig (DB unopenable) exits non-zero.
 
 ## Safety rules (do not violate)
 

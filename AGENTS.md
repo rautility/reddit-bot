@@ -22,6 +22,18 @@ Read the JSON before scheduling, queueing, or executing work. It reports saved
 Chrome profiles, active queue jobs, leases, registered schedules, Codex
 automations, account limits, and the default Chrome debugger address.
 
+### Helper Commands
+
+When something looks wrong before acting, run the read-only doctor:
+
+```bash
+.venv/bin/python scripts/reddit_tool.py doctor --json
+```
+
+It checks DB, profile associations, identity resolve, DevTools, healer extension,
+executor, queue depth, and leases. Soft failures (Chrome down) leave exit 0 so
+you can parse JSON; only hard misconfig (DB open failure) exits non-zero.
+
 ## Default Execution Rule
 
 For any live Reddit action requested from an agent or automation, the default

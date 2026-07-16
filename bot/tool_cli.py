@@ -32,6 +32,7 @@ from bot.agentctl import (
     REPO_ROOT,
 )
 from bot.config import BotConfig
+from bot.control import doctor as doctor_control
 from bot.control import schedules as schedule_control
 from bot.control.errors import CliError
 from bot.database import BotDatabase
@@ -361,6 +362,41 @@ def _print_overview(payload: dict[str, Any]) -> None:
 def command_overview(args: argparse.Namespace) -> int:
     payload = _agentctl_payload(args, ["status"])
     return _json_or_table(args, payload, _print_overview)
+
+
+def _print_doctor(payload: dict[str, Any]) -> None:
+    data = payload.get("data") or {}
+    print(doctor_control.format_checks_table(data))
+
+
+def command_doctor(args: argparse.Namespace) -> int:
+    """Read-only health checks: DB, profiles, debugger, queue, executor, etc.
+
+    Exit code is non-zero only for hard local misconfiguration (DB open
+    failure). Soft failures leave exit 0 so agents can parse JSON — see
+    ``data.summary.exitPolicy``.
+    """
+    config = _load_config(args)
+    report = doctor_control.run_doctor(
+        db_path=config.db_path,
+        debug_address=getattr(args, "debug_address", None) or None,
+        reddit_user=getattr(args, "reddit_user", None) or None,
+        profile_name=getattr(args, "profile_name", None) or None,
+        account_label=getattr(args, "account_label", None) or None,
+    )
+    # Envelope ok tracks hard failures only; per-check and summary.ok carry soft fails.
+    hard_failed = (report.get("summary") or {}).get("hardFailed") or []
+    payload = _envelope(
+        "doctor",
+        ok=not hard_failed,
+        data=report,
+        error=None if not hard_failed else f"Hard diagnostic failures: {', '.join(hard_failed)}",
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        _print_doctor(payload)
+    return doctor_control.process_exit_code(report)
 
 
 def _print_schedule_list(payload: dict[str, Any], *, limit: int, include_all_codex: bool) -> None:
@@ -2016,6 +2052,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     overview_parser = subparsers.add_parser("overview", help="Show queue, schedule, executor, profile, and error summary.")
     overview_parser.set_defaults(func=command_overview)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Read-only diagnostics for why the bot cannot act (DB, Chrome, queue, executor).",
+    )
+    doctor_parser.add_argument(
+        "--debug-address",
+        default="",
+        help="Override Chrome DevTools address to probe (default: resolved identity or 127.0.0.1:9222).",
+    )
+    _add_identity_options(doctor_parser)
+    doctor_parser.set_defaults(func=command_doctor)
 
     capabilities_parser = subparsers.add_parser(
         "capabilities",

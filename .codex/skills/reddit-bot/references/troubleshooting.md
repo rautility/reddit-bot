@@ -8,10 +8,14 @@ Every command supports `--json` and returns `{ok, error, data}`. Then:
 
 ```bash
 TOOL=".venv/bin/python scripts/reddit_tool.py"
+$TOOL doctor --json     # structured checks: DB, identity, DevTools, queue, executor
 $TOOL errors            # recent queue, schedule, action, and executor failures
 $TOOL job --id <N>      # one job's status, last error, and stored result
 $TOOL overview          # queue counts, executor state, active leases
 ```
+
+Start with `doctor` when the question is “why can’t I act?”. Soft check failures
+(Chrome down, executor stopped) leave exit 0; only DB open failure exits non-zero.
 
 ## Common cases
 
