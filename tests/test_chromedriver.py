@@ -1,16 +1,15 @@
 """Tests for ChromeDriver cache resolution helpers."""
 
-from pathlib import Path
-
 from bot.utils import chromedriver
 
 
 def test_chromedriver_cache_dir_defaults_to_repo_local_cache(mocker):
-    mocker.patch.dict("os.environ", {}, clear=False)
+    mocker.patch.dict("os.environ", {"REDDIT_BOT_WDM_CACHE": ""}, clear=False)
 
     cache_dir = chromedriver.chromedriver_cache_dir()
 
-    assert cache_dir == Path("/Users/raulvecchione/MEGA/rvScripts/reddit-bot/.webdriver")
+    assert cache_dir == chromedriver.DEFAULT_CACHE_DIR
+    assert cache_dir == chromedriver.REPO_ROOT / ".webdriver"
 
 
 def test_chromedriver_cache_dir_honors_env_override(tmp_path, mocker):

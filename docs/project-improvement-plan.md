@@ -1,5 +1,8 @@
 # Project Improvement Plan (for Codex)
 
+> **Status: COMPLETE (Phases 0–4 landed).** Remaining work lives in
+> [`docs/next-improvement-plan.md`](next-improvement-plan.md).
+
 Audience: an autonomous coding agent (Codex) working in this repository.
 Goal: land in-flight work, fix packaging/CI/hygiene debt, close pre-spec'd
 control-plane gaps, then build the local UI. Work the phases **in order** —
